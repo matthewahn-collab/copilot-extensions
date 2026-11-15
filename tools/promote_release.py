@@ -44,20 +44,22 @@ import os
 import subprocess
 import sys
 import tempfile
-import types
 from pathlib import Path
+from importlib.machinery import ModuleSpec
+from typing import Any, cast
 from promotion_candidate import (
     CandidateIdentityError, candidate_clock, candidate_environment, format_promotion_message,
     push_candidate,
 )
 from promotion_source_archive import (
-    changefile_existed_at as _changefile_existed_at,
+    changefile_existed_at as changefile_existed_at,
     git_environment,
     git_text,
     git_timeout_options,
     is_ancestor,
     main_version_inputs as _main_version_inputs,
 )
+_changefile_existed_at = changefile_existed_at
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -102,8 +104,8 @@ def _is_ancestor(ancestor: str, descendant: str, *, cwd: Path | None = None) -> 
     return is_ancestor(cwd or REPO, ancestor, descendant)
 
 
-def _load_module(path: Path, name: str) -> types.ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
+def _load_module(path: Path, name: str) -> Any:
+    spec = cast(ModuleSpec, importlib.util.spec_from_file_location(name, path))
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -134,7 +136,7 @@ def remove_scratch_worktree(scratch: Path, *, repo: Path = REPO) -> None:
     _git(["worktree", "remove", "--force", str(scratch)], cwd=repo, check=False)
 
 
-def _seed_versions_from_main(scratch: Path, main_head: str, *, acc, repo: Path) -> None:
+def _seed_versions_from_main(scratch: Path, main_head: str, *, acc: Any, repo: Path) -> None:
     """Overwrite every plugin's version-bearing surfaces in the scratch tree
     with whatever ``main`` last actually shipped for it, BEFORE any new bump
     is computed.
@@ -236,7 +238,7 @@ def _sync_instruction_projections(
     proc = run_composition_child(
         [sys.executable, str(script), "sync", str(scratch), "--json"],
         capture_output=True, text=True, env=git_environment(),
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
         **git_timeout_options(),
     )
     try:
@@ -259,7 +261,7 @@ def _sync_instruction_projections(
 def consume_pending_changes(
     scratch: Path, *, last_dev_head: str | None = None, main_head: str, repo: Path = REPO,
     trusted_source: Path | None = None, allocate_versions: bool = True,
-) -> dict:
+) -> dict[str, Any]:
     """Compose candidate data with its own or explicitly trusted signing tooling.
 
     ``allocate_versions=False`` retains Main versions and omits only scratch
@@ -369,7 +371,7 @@ def consume_pending_changes(
     return summary
 
 
-def _read_pipeline_state(main_head: str, *, repo: Path) -> dict:
+def _read_pipeline_state(main_head: str, *, repo: Path) -> dict[str, Any]:
     """Read the pipeline state committed at ``main_head``, or a fresh
     default state if the commit predates this file's introduction."""
     raw = _git(
@@ -385,12 +387,12 @@ def _read_pipeline_state(main_head: str, *, repo: Path) -> dict:
             "last_rollback": None,
         }
     try:
-        return json.loads(raw)
+        return cast(dict[str, Any], json.loads(raw))
     except json.JSONDecodeError as exc:
         raise PromotionError(f"pipeline state at {main_head} is not valid JSON: {exc}")
 
 
-def _write_pipeline_state_into_scratch(scratch: Path, state: dict) -> None:
+def _write_pipeline_state_into_scratch(scratch: Path, state: dict[str, Any]) -> None:
     path = scratch / PIPELINE_STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
@@ -558,7 +560,7 @@ def _remove_pycache(root: Path) -> None:
             _shutil.rmtree(cache_dir, ignore_errors=True)
 
 
-def build_promotion_tree(scratch: Path, *, control: dict | None = None) -> str:
+def build_promotion_tree(scratch: Path, *, control: dict[str, Any] | None = None) -> str:
     _remove_pycache(scratch)
     _git(["add", "-A"], cwd=scratch)
     if control is not None:
@@ -601,7 +603,7 @@ def promote(
     prepare_candidate_dir: Path | None = None,
     frozen_candidate_dir: Path | None = None,
     expected_candidate_sha: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Run one full promotion cycle. Returns a report dict; never raises for
     "nothing to promote" (reported via ``report["promoted"] is False``).
 
@@ -690,12 +692,12 @@ def promote(
             raise PromotionError("a frozen candidate cannot be recomposed")
         if expected_candidate_sha is None:
             raise PromotionError("frozen publication requires the admitted composition SHA")
-        return publish_frozen(
+        return cast(dict[str, Any], publish_frozen(
             frozen_candidate_dir, repo=repo, dev_head=dev_head, main_head=main_head,
             promotion_time=promotion_time, python_artifacts_dir=python_artifacts_dir,
             push=push, candidate_branch=candidate_branch,
             candidate_sha=expected_candidate_sha,
-        )
+        ))
     scratch = add_scratch_worktree(dev_head, repo=repo)
     try:
         summary = consume_pending_changes(
@@ -784,7 +786,7 @@ def promote(
                     raise PromotionError("existing source release tag binds a different source/composition")
                 if not existing:
                     _git(
-                        ["tag", "-a", tag_name, "-F", "-", commit],
+                        ["tag", "-a", cast(str, tag_name), "-F", "-", commit],
                         cwd=scratch, input_text=message,
                     )
             else:
@@ -793,7 +795,7 @@ def promote(
                 tag_name = None
             if push:
                 _git(["push", "origin", f"{commit}:refs/heads/main"], cwd=scratch)
-                _git(["push", "origin", tag_name], cwd=scratch)
+                _git(["push", "origin", cast(str, tag_name)], cwd=scratch)
 
         report = {
             "promoted": True,

@@ -525,8 +525,47 @@
       "include": [
         "plugins/agent-worktrees"
       ],
+      "exclude": [
+        "plugins/agent-worktrees/scripts/_runtime_admission"
+      ],
+      "level": "pending",
+      "import_roots": [
+        "plugins/agent-worktrees/scripts/_runtime_admission/tools",
+        "plugins/agent-worktrees/scripts/_runtime_admission/worktree-manager/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/agent-procutil/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/installation-context",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/installer-engine",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/plugin-resolve/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/single-instance-lease/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/update-driver/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/update-telemetry/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/versioned-runtime",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/zdd/src"
+      ]
+    },
+    {
+      "name": "agent-worktrees-admission-toolkit",
+      "include": [
+        "plugins/agent-worktrees/scripts/_runtime_admission"
+      ],
       "exclude": [],
-      "level": "pending"
+      "level": "pending",
+      "additional_python_versions": [
+        "3.11"
+      ],
+      "import_roots": [
+        "plugins/agent-worktrees/scripts/_runtime_admission/tools",
+        "plugins/agent-worktrees/scripts/_runtime_admission/worktree-manager/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/agent-procutil/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/installation-context",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/installer-engine",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/plugin-resolve/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/single-instance-lease/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/update-driver/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/update-telemetry/src",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/versioned-runtime",
+        "plugins/agent-worktrees/scripts/_runtime_admission/libs/zdd/src"
+      ]
     },
     {
       "name": "ai-attribution",
@@ -667,7 +706,8 @@
         "tools",
         "libs/installer-engine",
         "libs/versioned-runtime",
-        "worktree-manager/tests"
+        "worktree-manager/tests",
+        "libs/installation-context/tests"
       ],
       "exclude": [
         "tools/typecheck.py",
@@ -681,7 +721,7 @@
         "tools/promotion_unit_tests/test_typecheck_new_code.py"
       ],
       "level": "pending",
-      "requirements": "tools/typecheck-runner-requirements.txt"
+      "requirements": "tools/typecheck-tools-requirements.txt"
     },
     {
       "name": "worktree-manager",

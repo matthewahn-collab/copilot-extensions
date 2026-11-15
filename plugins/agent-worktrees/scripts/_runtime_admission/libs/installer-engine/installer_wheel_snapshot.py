@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
@@ -11,7 +12,7 @@ from pathlib import Path
 import re
 import stat
 from types import MappingProxyType
-from typing import BinaryIO, Mapping
+from typing import Any, BinaryIO, Mapping, cast
 import zipfile
 import zlib
 
@@ -20,9 +21,13 @@ from installer_wheel_inputs import (
     _unsafe_windows_component, preflight_archive,
 )
 
+_SnapshotRecord = tuple[os.stat_result, os.stat_result, str, int]
+
 
 @contextmanager
-def retain_wheel_inputs(archives, expected, **limits):
+def retain_wheel_inputs(
+    archives: Mapping[str, Path], expected: Mapping[str, str], **limits: Any,
+) -> Iterator[WheelSnapshot]:
     """Own exact byte snapshots, not profile approval or an installation."""
     import installer_dependency_policy as policy
 
@@ -33,7 +38,9 @@ def retain_wheel_inputs(archives, expected, **limits):
 
 
 @contextmanager
-def retain_wheel_bundle(bundle, expected, **limits):
+def retain_wheel_bundle(
+    bundle: Path, expected: Mapping[str, str], **limits: Any,
+) -> Iterator[WheelSnapshot]:
     """Unpack an already selected transport into the existing snapshot owner."""
     import installer_dependency_policy as policy
 
@@ -43,7 +50,9 @@ def retain_wheel_bundle(bundle, expected, **limits):
             yield snapshot
 
 
-def _selected_hashes(expected, max_wheels, deadline):
+def _selected_hashes(
+    expected: Mapping[str, str], max_wheels: int, deadline: float,
+) -> dict[str, str]:
     hashes = dict(expected)
     if not hashes or len(hashes) > max_wheels:
         raise WheelError("wheel snapshot count limit exceeded or empty set")
@@ -68,7 +77,7 @@ def open_wheel_bundle_snapshot(
     bundle_sha256: str, max_bundle_bytes: int, max_wheels: int,
     max_archive_bytes: int, max_total_bytes: int, max_snapshot_bytes: int,
     deadline: float,
-):
+) -> Iterator[WheelSnapshot]:
     """Retain exact ``wheels/<filename>`` members, not release/feed authority.
 
     The caller owns a private root and cleanup, as with open_wheel_snapshot.
@@ -153,7 +162,9 @@ def open_wheel_bundle_snapshot(
         yield snapshot
 
 
-def _unchanged(path, before, stream, *, opened=None):
+def _unchanged(
+    path: Path, before: os.stat_result, stream: BinaryIO, *, opened: os.stat_result | None = None,
+) -> os.stat_result:
     after = os.fstat(stream.fileno())
     changed = []
     if _identity(after) != _identity(before):
@@ -167,7 +178,9 @@ def _unchanged(path, before, stream, *, opened=None):
     return after
 
 
-def _digest(stream, limit, deadline, destination=None):
+def _digest(
+    stream: BinaryIO, limit: int, deadline: float, destination: BinaryIO | None = None,
+) -> tuple[str, int]:
     stream.seek(0)
     digest = hashlib.sha256()
     size = 0
@@ -188,14 +201,14 @@ def _digest(stream, limit, deadline, destination=None):
     return "sha256:" + digest.hexdigest(), size
 
 
-def _open(path):
+def _open(path: str | os.PathLike[str]) -> BinaryIO:
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
         import msvcrt
         from installer_dependency_policy import _native_retained_path
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
         create = kernel.CreateFileW
         create.argtypes = [
             wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
@@ -209,9 +222,11 @@ def _open(path):
         # change time can move on reads when NTFS last-access updates are enabled.
         handle = create(_native_retained_path(path), 0x80000000, 1, None, 3, 0x00200000, None)
         if handle == ctypes.c_void_p(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise getattr(ctypes, "WinError")(getattr(ctypes, "get_last_error")())
         try:
-            descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+            descriptor = getattr(msvcrt, "open_osfhandle")(
+                handle, os.O_RDONLY | getattr(os, "O_BINARY") | getattr(os, "O_NOINHERIT"),
+            )
         except BaseException:
             close(handle)
             raise
@@ -232,7 +247,7 @@ class WheelSnapshot:
 
     paths: Mapping[str, Path]
     archives: Mapping[str, BinaryIO]
-    _records: Mapping[str, tuple]
+    _records: Mapping[str, _SnapshotRecord]
     _deadline: float
 
     @property
@@ -256,7 +271,7 @@ class WheelSnapshot:
             self._deadline,
         )
 
-    def verify(self):
+    def verify(self) -> None:
         """Recheck custody before a caller's construction/publication boundary."""
         for name, path in self.paths.items():
             _check_deadline(self._deadline)
@@ -281,9 +296,9 @@ class WheelReuseInputs:
     canonical_json: str
     deadline: float
 
-    def receipt(self) -> dict:
+    def receipt(self) -> dict[str, Any]:
         self.verify()
-        return json.loads(self.canonical_json)
+        return cast(dict[str, Any], json.loads(self.canonical_json))
 
     @property
     def distributions(self) -> tuple[tuple[str, str, str, str], ...]:
@@ -348,8 +363,8 @@ class WheelInstallInputs:
     def deadline(self) -> float:
         return self.snapshot._deadline
 
-    def receipt(self) -> dict:
-        result = {
+    def receipt(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "construction": "closed-wheels",
             "lock_id": "sha256:" + hashlib.sha256(self.binding_json.encode("ascii")).hexdigest(),
             "binding": json.loads(self.binding_json),
@@ -365,9 +380,9 @@ class WheelInstallInputs:
             }
         return result
 
-    def _acquisition(self) -> dict:
+    def _acquisition(self) -> dict[str, Any]:
         try:
-            record = json.loads(self.acquisition_json)
+            record = json.loads(cast(str, self.acquisition_json))
             counters = {
                 "metadata_bytes", "wheel_bytes", "request_count", "redirect_count",
                 "control_bytes", "temporary_highwater_bytes",
@@ -416,7 +431,7 @@ class WheelInstallInputs:
                 or record["request_count"] < sum(len(item["source_origins"]) for item in record["files"])
             ):
                 raise ValueError
-            return record
+            return cast(dict[str, Any], record)
         except WheelError:
             raise
         except (ValueError, TypeError, KeyError):
@@ -463,7 +478,7 @@ def open_wheel_snapshot(
     root: Path, archives: Mapping[str, Path], expected: Mapping[str, str], *,
     max_wheels: int, max_archive_bytes: int, max_total_bytes: int,
     max_snapshot_bytes: int, deadline: float,
-):
+) -> Iterator[WheelSnapshot]:
     """Copy beneath a private invocation-owned root; its caller owns cleanup.
 
     Budgets are inclusive. Storage counts only the copied archive bytes: no
@@ -483,7 +498,7 @@ def open_wheel_snapshot(
     if set(archives) != set(expected):
         raise WheelError("wheel snapshot filename set differs from expected")
     paths, hashes = dict(archives), _selected_hashes(expected, max_wheels, deadline)
-    originals = {}
+    originals: dict[str, tuple[Path, os.stat_result]] = {}
     total = 0
     for name, source in paths.items():
         _check_deadline(deadline)
@@ -500,11 +515,13 @@ def open_wheel_snapshot(
     _check_deadline(deadline)
     directory = root / "wheels"
     directory.mkdir(mode=0o700)
-    retained, streams, records = {}, {}, {}
+    retained: dict[str, Path] = {}
+    streams: dict[str, BinaryIO] = {}
+    records: dict[str, _SnapshotRecord] = {}
     with ExitStack() as opened:
         with ExitStack() as sources:
             actual = 0
-            source_streams = {}
+            source_streams: dict[str, tuple[BinaryIO, os.stat_result]] = {}
             for name, (source, before) in originals.items():
                 _check_deadline(deadline)
                 stream = sources.enter_context(_open(source))

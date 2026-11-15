@@ -1,6 +1,9 @@
 """Source-bound release helper decisions without build or native actors."""
 from __future__ import annotations
 
+import os
+from typing import Any, Callable, ContextManager, Iterator
+
 import importlib.machinery
 import importlib.util
 import io
@@ -38,7 +41,7 @@ STATIC_BUILD = (
 )
 
 
-def test_gateway_build_context_contains_the_canonical_runtime_and_cache_closure():
+def test_gateway_build_context_contains_the_canonical_runtime_and_cache_closure() -> None:
     from standalone_python_artifacts import injected_resources
 
     runtime = {
@@ -68,13 +71,13 @@ def test_gateway_build_context_contains_the_canonical_runtime_and_cache_closure(
     assert runtime | cache <= included
 
 
-def _write(path, content):
+def _write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
 
 
 @pytest.fixture
-def static_project(tmp_path):
+def static_project(tmp_path: Path) -> Path:
     _write(
         tmp_path / "pyproject.toml",
         (STATIC_BUILD + '[project]\nname="fixture"\nversion="1"\n').encode(),
@@ -82,11 +85,11 @@ def static_project(tmp_path):
     return tmp_path
 
 
-def test_static_shadow_validation_bounds_probes_and_rechecks_new_inputs(static_project, monkeypatch):
+def test_static_shadow_validation_bounds_probes_and_rechecks_new_inputs(static_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     probes = []
 
-    def tracked(original):
-        def check(path, *args, **kwargs):
+    def tracked(original: Callable[..., bool]) -> Callable[..., bool]:
+        def check(path: Path, *args: Any, **kwargs: Any) -> bool:
             if path.parent == static_project:
                 probes.append(path)
             return original(path, *args, **kwargs)
@@ -102,7 +105,7 @@ def test_static_shadow_validation_bounds_probes_and_rechecks_new_inputs(static_p
 
 
 @pytest.mark.parametrize("kind", ["module", "package", "extension", "dangling", "case-alias"])
-def test_static_shadow_inventory_keeps_all_native_name_refusals(static_project, monkeypatch, kind):
+def test_static_shadow_inventory_keeps_all_native_name_refusals(static_project: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
     name = {
         "module": "setuptools.py", "package": "sitecustomize",
         "extension": "os" + importlib.machinery.EXTENSION_SUFFIXES[0],
@@ -124,10 +127,10 @@ def test_static_shadow_inventory_keeps_all_native_name_refusals(static_project, 
             validate_static_build(static_project)
 
 
-def test_static_shadow_inventory_refuses_unreadable_directory(static_project, monkeypatch):
-    scandir = source_build.os.scandir
+def test_static_shadow_inventory_refuses_unreadable_directory(static_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scandir: Callable[[str | os.PathLike[str]], ContextManager[Iterator[os.DirEntry[str]]]] = source_build.os.scandir
 
-    def scan(path):
+    def scan(path: str | os.PathLike[str]) -> ContextManager[Iterator[os.DirEntry[str]]]:
         if Path(path) == static_project:
             raise PermissionError("selected source directory is unreadable")
         return scandir(path)
@@ -138,7 +141,7 @@ def test_static_shadow_inventory_refuses_unreadable_directory(static_project, mo
 
 
 @pytest.fixture
-def container_project(tmp_path):
+def container_project(tmp_path: Path) -> Path:
     source = tmp_path / "plugins/agent-containers"
     _write(
         source / "pyproject.toml",
@@ -155,7 +158,7 @@ def container_project(tmp_path):
 
 
 @pytest.mark.parametrize("included", [False, True], ids=["canonical", "matching-included"])
-def test_containers_admits_exact_source_owned_resources(container_project, tmp_path, included):
+def test_containers_admits_exact_source_owned_resources(container_project: Path, tmp_path: Path, included: bool) -> None:
     source = container_project
     expected = {
         destination: source / "scripts" / name
@@ -177,8 +180,8 @@ def test_containers_admits_exact_source_owned_resources(container_project, tmp_p
 @pytest.mark.parametrize("name", list(RESOURCE_NAMES), ids=list(RESOURCE_NAMES))
 @pytest.mark.parametrize("fault", ["missing", "included-tamper"])
 def test_containers_refuses_each_missing_or_tampered_resource(
-    container_project, tmp_path, name, fault,
-):
+    container_project: Path, tmp_path: Path, name: str, fault: str,
+) -> None:
     source = container_project
     if fault == "missing":
         (source / "scripts" / name).unlink()
@@ -193,7 +196,7 @@ def test_containers_refuses_each_missing_or_tampered_resource(
 @pytest.mark.parametrize("fault", [
     "helper-missing", "helper-tamper", "included-helper-tamper", "setup-tamper", "linked-source",
 ])
-def test_containers_refuses_foreign_build_ownership(container_project, tmp_path, fault):
+def test_containers_refuses_foreign_build_ownership(container_project: Path, tmp_path: Path, fault: str) -> None:
     source = container_project
     message = "runtime build helper differs"
     if fault == "helper-missing":
@@ -217,14 +220,14 @@ def test_containers_refuses_foreign_build_ownership(container_project, tmp_path,
 
 @pytest.mark.parametrize("root_kind", ["absent", "different"])
 def test_noncanonical_containers_location_does_not_borrow_hook_authority(
-    container_project, tmp_path, root_kind,
-):
+    container_project: Path, tmp_path: Path, root_kind: str,
+) -> None:
     root = None if root_kind == "absent" else tmp_path / "other"
     with pytest.raises(PromotionArtifactError, match="unsupported executable"):
         resources.build_inputs(container_project, root=root)
 
 
-def test_ordinary_static_package_needs_no_runtime_resources(tmp_path):
+def test_ordinary_static_package_needs_no_runtime_resources(tmp_path: Path) -> None:
     _write(
         tmp_path / "pyproject.toml",
         (STATIC_BUILD + '[project]\nname = "ordinary"\nversion = "1.0"\n').encode(),
@@ -235,7 +238,7 @@ def test_ordinary_static_package_needs_no_runtime_resources(tmp_path):
 
 
 @pytest.fixture
-def native_project(tmp_path):
+def native_project(tmp_path: Path) -> Path:
     source = tmp_path / "procutil"
     _write(source / "setup.py", (PROCUTIL / "setup.py").read_bytes())
     _write(
@@ -246,7 +249,7 @@ def native_project(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["agent-procutil", "Agent_Procutil"])
-def test_native_setup_admits_exact_registered_hook(native_project, name):
+def test_native_setup_admits_exact_registered_hook(native_project: Path, name: str) -> None:
     assert native.trusted_setup(native_project, {"project": {"name": name}}) == (
         PROCUTIL / "setup.py"
     ).read_bytes()
@@ -255,16 +258,16 @@ def test_native_setup_admits_exact_registered_hook(native_project, name):
 
 @pytest.mark.parametrize("project", [None, {}, {"name": []}, {"name": "foreign"}],
                          ids=["non-table", "missing-name", "non-string-name", "foreign-name"])
-def test_unregistered_project_has_no_native_hook_authority(tmp_path, project):
+def test_unregistered_project_has_no_native_hook_authority(tmp_path: Path, project: object) -> None:
     assert native.trusted_setup(tmp_path, {"project": project}) is None
 
 
-def test_legacy_procutil_without_native_inputs_has_no_build_hook(tmp_path):
+def test_legacy_procutil_without_native_inputs_has_no_build_hook(tmp_path: Path) -> None:
     assert native.trusted_setup(tmp_path, {"project": {"name": "agent-procutil"}}) is None
 
 
 @pytest.mark.parametrize("fault", ["missing", "directory", "tamper"])
-def test_process_setup_requires_exact_ordinary_shim(native_project, fault):
+def test_process_setup_requires_exact_ordinary_shim(native_project: Path, fault: str) -> None:
     path = native_project / "setup.py"
     if fault in {"missing", "directory"}:
         path.unlink()
@@ -280,7 +283,7 @@ def test_process_setup_requires_exact_ordinary_shim(native_project, fault):
 
 
 @pytest.mark.parametrize("fault", ["escape", "linked-parent"])
-def test_native_input_refuses_escape_and_redirected_ancestor(tmp_path, fault):
+def test_native_input_refuses_escape_and_redirected_ancestor(tmp_path: Path, fault: str) -> None:
     root = tmp_path / "source"
     root.mkdir()
     target = tmp_path / "outside.c"
@@ -297,8 +300,8 @@ def test_native_input_refuses_escape_and_redirected_ancestor(tmp_path, fault):
         native._ordinary(path, root)
 
 
-def _archive(actual, *, arch="x86_64", tags=None, pure=False, mode=stat.S_IFREG | 0o755,
-             extra=False):
+def _archive(actual: bytes | None, *, arch: str="x86_64", tags: list[str] | None=None, pure: bool=False, mode: int=stat.S_IFREG | 0o755,
+             extra: bool=False) -> zipfile.ZipFile:
     stream = io.BytesIO()
     member = f"agent_procutil/native/linux-{arch}/daemon-instance"
     with zipfile.ZipFile(stream, "w") as archive:
@@ -321,9 +324,9 @@ def _archive(actual, *, arch="x86_64", tags=None, pure=False, mode=stat.S_IFREG 
 
 @pytest.mark.parametrize("arch", ["x86_64", "aarch64"])
 def test_legacy_native_artifact_is_refused_without_compiler_actor(
-    native_project, monkeypatch, arch,
-):
-    def refuse(*args, **kwargs):
+    native_project: Path, monkeypatch: pytest.MonkeyPatch, arch: str,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
         pytest.fail("artifact admission must never invoke a compiler or subprocess")
 
     monkeypatch.setattr(subprocess, "run", refuse)
@@ -345,12 +348,12 @@ def test_legacy_native_artifact_is_refused_without_compiler_actor(
     ("ambiguous", "pure Python wheel"),
 ])
 def test_native_artifact_refuses_invalid_metadata_before_compilation(
-    native_project, monkeypatch, fault, message,
-):
+    native_project: Path, monkeypatch: pytest.MonkeyPatch, fault: str, message: str,
+) -> None:
     calls = []
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: calls.append(args))
-    actual = b"legacy executable"
-    options = {}
+    actual: bytes | None = b"legacy executable"
+    options: dict[str, Any] = {}
     if fault == "missing":
         actual = None
     elif fault == "extra":
@@ -372,7 +375,7 @@ def test_native_artifact_refuses_invalid_metadata_before_compilation(
 
 
 @pytest.mark.parametrize("registered", [False, True], ids=["foreign", "pure-procutil"])
-def test_pure_wheels_have_no_generated_native_assets(native_project, monkeypatch, registered):
+def test_pure_wheels_have_no_generated_native_assets(native_project: Path, monkeypatch: pytest.MonkeyPatch, registered: bool) -> None:
     calls = []
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: calls.append(args))
     data = {"project": {"name": "agent-procutil" if registered else "ordinary"}}
@@ -384,19 +387,20 @@ def test_pure_wheels_have_no_generated_native_assets(native_project, monkeypatch
 
 
 @pytest.fixture
-def runtime_builder(monkeypatch):
-    events = []
+def runtime_builder(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[tuple[object, ...]]]:
+    events: list[tuple[object, ...]] = []
 
     class BuildPyActor:
-        def run(self):
+        existing_outputs: list[str]
+        def run(self) -> None:
             events.append(("build-py",))
 
-        def get_outputs(self, include_bytecode=1):
+        def get_outputs(self, include_bytecode: int=1) -> list[str]:
             events.append(("get-outputs", include_bytecode))
             return list(self.existing_outputs)
 
     class SdistActor:
-        def make_release_tree(self, base_dir, files):
+        def make_release_tree(self, base_dir: str, files: list[str]) -> None:
             events.append(("sdist", base_dir, files))
 
     class InstallLibActor:
@@ -406,7 +410,7 @@ def runtime_builder(monkeypatch):
         pass
 
     class DistributionActor:
-        def get_command_class(self, _name):
+        def get_command_class(self, _name: str) -> None:
             raise MissingWheelCommand()
 
     # Only setuptools' superclass actors are replaced; the resource decisions run unchanged.
@@ -414,7 +418,7 @@ def runtime_builder(monkeypatch):
         package = ModuleType(name)
         package.__path__ = []
         if name == "setuptools":
-            package.Distribution = DistributionActor
+            setattr(package, "Distribution", DistributionActor)
         monkeypatch.setitem(sys.modules, name, package)
     for name, attribute, actor in (
         ("setuptools.command.build_py", "build_py", BuildPyActor),
@@ -434,8 +438,8 @@ def runtime_builder(monkeypatch):
 
 
 def test_application_resources_keep_provider_metadata_without_broadening_other_assets(
-    tmp_path, runtime_builder,
-):
+    tmp_path: Path, runtime_builder: tuple[Any, list[tuple[object, ...]]],
+) -> None:
     module, events = runtime_builder
     expected = {
         "scripts/runtime-source-tools/tools/provider.py",
@@ -464,8 +468,8 @@ def test_application_resources_keep_provider_metadata_without_broadening_other_a
 
 @pytest.mark.parametrize("kind", ["ordinary", "missing", "directory", "linked-file", "linked-parent"])
 def test_runtime_resource_ordinary_file_decides_without_packaging_actor(
-    tmp_path, runtime_builder, kind,
-):
+    tmp_path: Path, runtime_builder: tuple[Any, list[tuple[object, ...]]], kind: str,
+) -> None:
     module, events = runtime_builder
     path = tmp_path / "input.py"
     if kind != "missing":
@@ -496,8 +500,8 @@ def test_runtime_resource_ordinary_file_decides_without_packaging_actor(
     "required-tamper", "optional-tamper",
 ])
 def test_runtime_resource_selection_requires_all_canonical_bytes(
-    tmp_path, runtime_builder, case,
-):
+    tmp_path: Path, runtime_builder: tuple[Any, list[tuple[object, ...]]], case: str,
+) -> None:
     module, events = runtime_builder
     canonical, second, included = [tmp_path / name for name in ("canonical", "second", "included")]
     for path in (canonical, second, included):
@@ -525,8 +529,8 @@ def test_runtime_resource_selection_requires_all_canonical_bytes(
 
 @pytest.mark.parametrize("layout", ["canonical", "sdist"])
 def test_runtime_commands_deliver_bound_resources_and_helper(
-    tmp_path, runtime_builder, layout,
-):
+    tmp_path: Path, runtime_builder: tuple[Any, list[tuple[object, ...]]], layout: str,
+) -> None:
     module, events = runtime_builder
     project = tmp_path / "project"
     canonical = tmp_path / "canonical"
@@ -574,7 +578,7 @@ def test_runtime_commands_deliver_bound_resources_and_helper(
 @pytest.mark.parametrize("fault", [
     "missing-resource", "included-resource-tamper", "included-helper-tamper", "companion-tamper",
 ])
-def test_runtime_commands_refuse_before_setuptools_actor(tmp_path, runtime_builder, fault):
+def test_runtime_commands_refuse_before_setuptools_actor(tmp_path: Path, runtime_builder: tuple[Any, list[tuple[object, ...]]], fault: str) -> None:
     module, events = runtime_builder
     project, canonical = tmp_path / "project", tmp_path / "canonical"
     helper_bytes = (ROOT / "libs/versioned-runtime/standalone_build.py").read_bytes()

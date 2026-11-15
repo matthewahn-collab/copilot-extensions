@@ -1,5 +1,35 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any, Protocol
+    class _LegacyOfflineEnvironment(Protocol):
+        def __call__(self, tmp_path: Path) -> dict[str, str]: ...
+    class _LegacySourceProject(Protocol):
+        def __call__(self, path: Path, name: str = "fixture-source", sources: str = "", dependencies: str = "", module_code: str | None = None) -> Path: ...
+
+from typing import cast
+
+
+if TYPE_CHECKING:
+    from versioned_runtime_source import SourceIdentity
+
+from typing import ContextManager, Iterator, Iterable
+
+if TYPE_CHECKING:
+    from runtime_profile_policy import InstallationProfilePlan
+    from runtime_source_lock import SourceLockCandidate
+    from installer_dependency_policy import RetainedUVInstall
+    from packaging.version import Version
+    from packaging.tags import Tag
+
+
+if TYPE_CHECKING:
+    from test_runtime_profile_policy import _Adopter
+
+from typing import Any
+
 from dataclasses import replace
 from contextlib import contextmanager, nullcontext
 import hashlib
@@ -25,7 +55,7 @@ from test_installer_dependency_policy import offline_environment, source_project
 from test_runtime_profile_policy_plan import adopter as adopter
 
 
-def _selected_identity(payload):
+def _selected_identity(payload: Path) -> tuple[Path, SourceIdentity]:
     from versioned_runtime_source import SOURCE_FILE, SourceIdentity, assembly_hash, runtime_version
 
     digest = assembly_hash(payload)
@@ -38,8 +68,8 @@ def _selected_identity(payload):
 
 
 @pytest.fixture
-def source(tmp_path):
-    payload = source_project(tmp_path / "payload")
+def source(tmp_path: Path) -> tuple[Path, SourceIdentity]:
+    payload = cast("_LegacySourceProject", source_project)(tmp_path / "payload")
     manifest = payload / "pyproject.toml"
     manifest.write_text(manifest.read_text().replace('version="1.0"', 'version="1.0.0"'), encoding="utf-8")
     (payload / "plugin.json").write_text(json.dumps({"name": "fixture-source", "version": "1.0.0"}))
@@ -47,11 +77,11 @@ def source(tmp_path):
 
 
 @pytest.fixture
-def target():
+def target() -> dict[str, Any]:
     return {"environment": default_environment(), "tags": ["py3-none-any"], "device": "cpu"}
 
 
-def plan(adopter):
+def plan(adopter: _Adopter) -> InstallationProfilePlan:
     return planner.plan_installation_profile(
         installation=adopter[1], release_index=None, repository="example/plugins",
         signer_digest="", source_digest="", source_ref="", release={}, artifact=None,
@@ -59,11 +89,11 @@ def plan(adopter):
     )
 
 
-def candidate(adopter, source, target, tmp_path, *, wheel_witness=False, **changes):
+def candidate(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, *, wheel_witness: bool=False, **changes: Any) -> ContextManager[SourceLockCandidate]:
     arguments = dict(
         payload=source[0], expected_source=source[1], target=target, component="fixture",
         uv="uv", python=Path(sys.executable), max_lock_bytes=4096,
-        deadline=time.monotonic() + 60, env=offline_environment(tmp_path),
+        deadline=time.monotonic() + 60, env=cast("_LegacyOfflineEnvironment", offline_environment)(tmp_path),
     )
     retain = locks.retain_source_wheel_lock if wheel_witness else locks.retain_source_lock
     return retain(plan(adopter), **(arguments | changes))
@@ -71,8 +101,8 @@ def candidate(adopter, source, target, tmp_path, *, wheel_witness=False, **chang
 
 @pytest.mark.parametrize("failure", ["timeout", "success"])
 def test_expired_outer_source_transaction_preserves_active_timeout_and_diagnostics(
-    adopter, source, target, tmp_path, monkeypatch, failure,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
     import installer_wheel_inputs as inputs
 
     deadline = time.monotonic() + 60
@@ -87,13 +117,13 @@ def test_expired_outer_source_transaction_preserves_active_timeout_and_diagnosti
                 raise timeout
     if failure == "timeout":
         assert observed.value is timeout
-        assert observed.value.output == b"output" and observed.value.stderr == b"diagnostics"
+        assert cast(subprocess.TimeoutExpired, observed.value).output == b"output" and cast(subprocess.TimeoutExpired, observed.value).stderr == b"diagnostics"
 
 
 @pytest.mark.parametrize("wheel_witness", [False, True])
 def test_native_source_lock_binds_real_owner_plan_selected_source_and_empty_closure(
-    adopter, source, target, tmp_path, wheel_witness, monkeypatch,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, wheel_witness: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # This source has no third-party requirements; an empty third-party lock is real.
     with candidate(adopter, source, target, tmp_path, wheel_witness=wheel_witness) as selected:
         record = selected.record()
@@ -108,7 +138,7 @@ def test_native_source_lock_binds_real_owner_plan_selected_source_and_empty_clos
         assert selected.lock_id == "sha256:" + hashlib.sha256(selected.canonical).hexdigest()
         if wheel_witness:
             assert record["files"] == []
-            assert record["native_lock_sha256"] == "sha256:" + hashlib.sha256(selected.native_lock).hexdigest()
+            assert record["native_lock_sha256"] == "sha256:" + hashlib.sha256(cast(bytes, selected.native_lock)).hexdigest()
         else:
             assert selected.native_lock is None
         assert selected.payload != source[0]
@@ -116,7 +146,7 @@ def test_native_source_lock_binds_real_owner_plan_selected_source_and_empty_clos
         scans = []
         actual_fingerprint = locks.runtime.fingerprint_source
 
-        def fingerprint(paths, **kwargs):
+        def fingerprint(paths: Iterable[Path], **kwargs: Any) -> str:
             scans.append(tuple(paths))
             assert callable(kwargs["on_progress"])
             return actual_fingerprint(scans[-1], **kwargs)
@@ -136,8 +166,8 @@ def test_native_source_lock_binds_real_owner_plan_selected_source_and_empty_clos
 @pytest.mark.skipif(os.name != "nt", reason="Windows native interpreter path limit")
 @pytest.mark.timeout(60)
 def test_source_configuration_launches_a_real_long_path_interpreter(
-    adopter, source, target, tmp_path,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path,
+) -> None:
     import venv
     from build_toolchain_lock import _query_marker_environment
 
@@ -154,14 +184,14 @@ def test_source_configuration_launches_a_real_long_path_interpreter(
 
 @pytest.mark.parametrize("changed", ["origin", "retained", "custody"])
 def test_source_owner_delegation_keeps_fresh_origin_retention_and_custody_checks(
-    adopter, source, target, tmp_path, monkeypatch, changed,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str,
+) -> None:
     from versioned_runtime_source import SourceIdentityError
 
     actual_source = locks._source
     active = True
 
-    def verify(payload, identity):
+    def verify(payload: Path, identity: SourceIdentity) -> None:
         assert payload == source[0] and identity == source[1]
         if not active:
             raise ProfileError("fixture source owner custody closed")
@@ -191,8 +221,8 @@ def test_source_owner_delegation_keeps_fresh_origin_retention_and_custody_checks
 @pytest.mark.parametrize("as_extra", [False, True])
 @pytest.mark.parametrize("wheel_witness,multiple", [(False, False), (True, False), (True, True)])
 def test_native_source_lock_binds_nonempty_dated_feed_output(
-    adopter, source, target, tmp_path, as_extra, wheel_witness, multiple,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, as_extra: bool, wheel_witness: bool, multiple: bool,
+) -> None:
     filename = "fixture_registry-1.0-py3-none-any.whl"
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as wheel:
@@ -205,16 +235,16 @@ def test_native_source_lock_binds_nonempty_dated_feed_output(
     filenames = [filename, "fixture_registry-1.0-py2.py3-none-any.whl"] if multiple else [filename]
 
     class Index(BaseHTTPRequestHandler):
-        def log_message(self, *args):
+        def log_message(self, *args: object) -> None:
             pass
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             self.respond(head=False)
 
-        def do_HEAD(self):
+        def do_HEAD(self) -> None:
             self.respond(head=True)
 
-        def respond(self, *, head):
+        def respond(self, *, head: bool) -> None:
             if self.path.rstrip("/") == "/simple/fixture-registry":
                 body = json.dumps({
                     "meta": {"api-version": "1.2"}, "name": "fixture-registry",
@@ -246,7 +276,7 @@ def test_native_source_lock_binds_nonempty_dated_feed_output(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Index)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    environment = offline_environment(tmp_path)
+    environment = cast("_LegacyOfflineEnvironment", offline_environment)(tmp_path)
     environment.pop("UV_OFFLINE", None)
     configuration = tmp_path / "uv.toml"
     configuration.write_text(
@@ -270,7 +300,7 @@ def test_native_source_lock_binds_nonempty_dated_feed_output(
                     "name": "fixture-registry", "version": "1.0", "filename": filename,
                     "sha256": "sha256:" + digest,
                 }]
-                assert filename.encode() in selected.native_lock
+                assert filename.encode() in cast(bytes, selected.native_lock)
                 assert b"127.0.0.1" not in selected.canonical
                 assert b"127.0.0.1" not in selected.requirements
     finally:
@@ -283,13 +313,13 @@ def test_native_source_lock_binds_nonempty_dated_feed_output(
     ("source_commit", "c" * 40), ("source_tree", "c" * 40),
     ("assembly_hash", "c" * 64), ("runtime_version", "different"),
 ])
-def test_independently_selected_source_cannot_be_replaced(adopter, source, target, tmp_path, field, value):
+def test_independently_selected_source_cannot_be_replaced(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, field: str, value: str) -> None:
     with pytest.raises((ProfileError, ValueError), match="source"):
         with candidate(adopter, source, target, tmp_path, expected_source=replace(source[1], **{field: value})):
             pytest.fail("unselected source reached a candidate")
 
 
-def test_source_integrity_failure_is_not_an_availability_fallback(adopter, source, target, tmp_path):
+def test_source_integrity_failure_is_not_an_availability_fallback(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path) -> None:
     (source[0] / "fixture_backend.py").write_text("changed")
     with pytest.raises(ValueError, match="bytes"):
         with candidate(adopter, source, target, tmp_path):
@@ -297,15 +327,15 @@ def test_source_integrity_failure_is_not_an_availability_fallback(adopter, sourc
 
 
 def test_transient_source_change_cannot_be_labeled_with_restored_origin(
-    adopter, source, target, tmp_path, monkeypatch,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     actual = locks.dependencies.retain_uv_source_compile
     backend = source[0] / "fixture_backend.py"
     original = backend.read_bytes()
     snapshots = []
 
     @contextmanager
-    def changed(uv, arguments, **options):
+    def changed(uv: str, arguments: list[str], **options: Any) -> Iterator[RetainedUVInstall]:
         backend.write_bytes(original + b"\nTRANSIENT = True\n")
         with actual(uv, arguments, **options) as transaction:
             snapshots.append(transaction.sources[source[0]])
@@ -320,11 +350,11 @@ def test_transient_source_change_cannot_be_labeled_with_restored_origin(
     assert snapshots and all(not path.exists() for path in snapshots)
 
 
-def test_missing_retained_source_coverage_refuses(adopter, source, target, tmp_path, monkeypatch):
+def test_missing_retained_source_coverage_refuses(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     actual = locks.dependencies.retain_uv_source_compile
 
     @contextmanager
-    def incomplete(uv, arguments, **options):
+    def incomplete(uv: str, arguments: list[str], **options: Any) -> Iterator[RetainedUVInstall]:
         with actual(uv, arguments, **options) as transaction:
             transaction.source_hashes.pop(source[0] / "fixture_backend.py")
             yield transaction
@@ -335,7 +365,7 @@ def test_missing_retained_source_coverage_refuses(adopter, source, target, tmp_p
             pytest.fail("incomplete retained inventory reached compilation")
 
 
-def test_retained_source_mutation_during_consumption_refuses(adopter, source, target, tmp_path):
+def test_retained_source_mutation_during_consumption_refuses(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path) -> None:
     with pytest.raises(ProfileError, match="during candidate consumption"):
         with candidate(adopter, source, target, tmp_path) as selected:
             retained = selected.payload
@@ -347,13 +377,13 @@ def test_retained_source_mutation_during_consumption_refuses(adopter, source, ta
 
 @pytest.mark.parametrize("override", ["environment", "configuration", "universal"])
 def test_native_platform_override_cannot_hide_an_applicable_dependency(
-    adopter, source, target, tmp_path, override,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, override: str,
+) -> None:
     manifest = source[0] / "pyproject.toml"
     requirement = "fixture-unavailable==1.0; sys_platform == " + repr(sys.platform)
     manifest.write_text(manifest.read_text().replace("dependencies=[]", "dependencies=[" + json.dumps(requirement) + "]"))
     selected_source = _selected_identity(source[0])
-    environment = offline_environment(tmp_path)
+    environment = cast("_LegacyOfflineEnvironment", offline_environment)(tmp_path)
     other_platform = "x86_64-unknown-linux-gnu" if sys.platform == "win32" else "x86_64-pc-windows-msvc"
     if override == "environment":
         environment["UV_PYTHON_PLATFORM"] = other_platform
@@ -368,12 +398,12 @@ def test_native_platform_override_cannot_hide_an_applicable_dependency(
 
 
 def test_source_deadline_reaches_settings_probe_during_context_entry(
-    adopter, source, target, tmp_path, monkeypatch,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     actual = subprocess.run
     timeouts = []
 
-    def run(command, **options):
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
         if "--show-settings" in command:
             timeouts.append(options["timeout"])
             raise subprocess.TimeoutExpired(command, options["timeout"])
@@ -386,14 +416,14 @@ def test_source_deadline_reaches_settings_probe_during_context_entry(
     assert len(timeouts) == 1 and 0 < timeouts[0] <= 5
 
 
-def test_target_must_match_actual_selected_interpreter(adopter, source, target, tmp_path):
+def test_target_must_match_actual_selected_interpreter(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path) -> None:
     target["environment"]["platform_machine"] = "unavailable-target"
     with pytest.raises(ProfileError, match="interpreter"):
         with candidate(adopter, source, target, tmp_path):
             pytest.fail("wrong target reached resolution")
 
 
-def test_source_candidate_preserves_declared_extras_and_refuses_unknown_ones(adopter, source, target, tmp_path):
+def test_source_candidate_preserves_declared_extras_and_refuses_unknown_ones(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path) -> None:
     with pytest.raises(ProfileError, match="undeclared extra"):
         with candidate(adopter, source, target, tmp_path, extras=("missing",)):
             pytest.fail("unknown capability silently became base")
@@ -415,19 +445,19 @@ def test_source_candidate_preserves_declared_extras_and_refuses_unknown_ones(ado
     b"fixture==1.0 --hash=sha512:" + b"a" * 64,
     b"fixture==1.0 --hash=sha256:" + b"a" * 64 + b"\nFixture==2.0 --hash=sha256:" + b"b" * 64,
 ])
-def test_candidate_output_must_be_exact_applicable_and_hashed(content):
+def test_candidate_output_must_be_exact_applicable_and_hashed(content: bytes) -> None:
     with pytest.raises(ProfileError):
-        locks._pins(content, default_environment(), time.monotonic() + 10)
+        locks._pins(content, cast(dict[str, str], default_environment()), time.monotonic() + 10)
 
 
-def test_exact_candidate_pins_are_frozen_without_claiming_wheel_admission():
+def test_exact_candidate_pins_are_frozen_without_claiming_wheel_admission() -> None:
     content = b"fixture==1.0 \\\n --hash=sha256:" + b"a" * 64 + b"\n"
-    assert locks._pins(content, default_environment(), time.monotonic() + 10) == [
+    assert locks._pins(content, cast(dict[str, str], default_environment()), time.monotonic() + 10) == [
         {"name": "fixture", "version": "1.0", "hashes": ["sha256:" + "a" * 64]},
     ]
 
 
-def _native_wheel_lock(**package_changes):
+def _native_wheel_lock(**package_changes: object) -> dict[str, Any]:
     package = {
         "name": "fixture", "version": "1.0",
         "wheels": [{"url": "https://example.invalid/files/fixture-1.0-py3-none-any.whl",
@@ -436,7 +466,7 @@ def _native_wheel_lock(**package_changes):
     return package
 
 
-def _wheel_pins(packages, target, **options):
+def _wheel_pins(packages: list[dict[str, Any]], target: dict[str, Any], **options: Any) -> list[dict[str, Any]]:
     # JSON shapes feed the real TOML parser without inventing a second lock format.
     prefix = 'lock-version = "1.0"\ncreated-by = "uv"\nrequires-python = ">=3"\n'
     lines = [prefix]
@@ -457,14 +487,14 @@ def _wheel_pins(packages, target, **options):
     return locks._wheel_pins(content, target, time.monotonic() + 10, **options)
 
 
-def test_native_exact_witness_carries_actual_filename_without_admitting_url(target):
+def test_native_exact_witness_carries_actual_filename_without_admitting_url(target: dict[str, Any]) -> None:
     assert _wheel_pins([_native_wheel_lock()], target) == [{
         "name": "fixture", "version": "1.0", "filename": "fixture-1.0-py3-none-any.whl",
         "sha256": "sha256:" + "a" * 64,
     }]
 
 
-def test_native_local_witness_requires_the_exact_held_wheel(target, tmp_path):
+def test_native_local_witness_requires_the_exact_held_wheel(target: dict[str, Any], tmp_path: Path) -> None:
     filename = "fixture-1.0-py3-none-any.whl"
     held = tmp_path / filename
     held.write_bytes(b"held")
@@ -483,7 +513,7 @@ def test_native_local_witness_requires_the_exact_held_wheel(target, tmp_path):
             _wheel_pins([package], target, local_wheels={filename: held})
 
 
-def test_native_witness_canonicalizes_duplicate_tag_alternatives_before_parsing(target, monkeypatch):
+def test_native_witness_canonicalizes_duplicate_tag_alternatives_before_parsing(target: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     import runtime_profile
 
     filename = "fixture-1.0-" + "-".join(
@@ -494,7 +524,7 @@ def test_native_witness_canonicalizes_duplicate_tag_alternatives_before_parsing(
     actual = runtime_profile.parse_wheel_filename
     parsed = []
 
-    def bounded_parse(name):
+    def bounded_parse(name: str) -> tuple[str, Version, tuple[()] | tuple[int, str], frozenset[Tag]]:
         assert name == "fixture-1.0-py3-none-any.whl"
         parsed.append(name)
         return actual(name)
@@ -508,7 +538,7 @@ def test_native_witness_canonicalizes_duplicate_tag_alternatives_before_parsing(
     "ambiguous", "source-only", "foreign-name", "foreign-version", "foreign-tag",
     "invalid-hash", "duplicate", "path", "encoded-path", "non-wheel", "marker", "unlocked",
 ])
-def test_native_witness_refuses_ambiguity_or_unsupported_records(target, kind):
+def test_native_witness_refuses_ambiguity_or_unsupported_records(target: dict[str, Any], kind: str) -> None:
     package = _native_wheel_lock()
     packages = [package]
     if kind == "ambiguous":
@@ -540,21 +570,21 @@ def test_native_witness_refuses_ambiguity_or_unsupported_records(target, kind):
     b"", b"\xff", b"lock-version = true", b'lock-version = "1.0"\nlock-version = "1.0"',
     b'lock-version = "1.0"\ncreated-by = "uv"\nrequires-python = ">=399"',
 ])
-def test_native_witness_refuses_malformed_or_incompatible_documents(content, target):
+def test_native_witness_refuses_malformed_or_incompatible_documents(content: bytes, target: dict[str, Any]) -> None:
     with pytest.raises(ProfileError):
         locks._wheel_pins(content, target, time.monotonic() + 10)
 
 
 def test_native_source_only_third_party_is_refused_without_backend_execution(
-    adopter, source, target, tmp_path,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path,
+) -> None:
     calls = []
 
     class Index(BaseHTTPRequestHandler):
-        def log_message(self, *args):
+        def log_message(self, *args: object) -> None:
             pass
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             calls.append(self.path)
             if self.path.rstrip("/") != "/simple/fixture-registry":
                 self.send_error(500, "source archive must not be requested")
@@ -576,7 +606,7 @@ def test_native_source_only_third_party_is_refused_without_backend_execution(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Index)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    environment = offline_environment(tmp_path)
+    environment = cast("_LegacyOfflineEnvironment", offline_environment)(tmp_path)
     environment.pop("UV_OFFLINE", None)
     configuration = tmp_path / "uv.toml"
     configuration.write_text(
@@ -599,13 +629,13 @@ def test_native_source_only_third_party_is_refused_without_backend_execution(
 
 @pytest.mark.parametrize("failure", ["nonzero", "timeout", "cancel", "oversize", "source-change"])
 def test_failed_export_releases_retained_inputs_without_a_candidate(
-    adopter, source, target, tmp_path, monkeypatch, failure,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
     actual = subprocess.run
     retained = []
     outputs = []
 
-    def run(command, **options):
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
         if command[1:3] != ["pip", "compile"] or "--show-settings" in command:
             return actual(command, **options)
         retained.append(Path(options["cwd"]))
@@ -629,11 +659,11 @@ def test_failed_export_releases_retained_inputs_without_a_candidate(
     assert outputs and all(not path.parent.exists() for path in outputs)
 
 
-def test_lock_byte_budget_is_inclusive(adopter, source, target, tmp_path, monkeypatch):
+def test_lock_byte_budget_is_inclusive(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     actual = subprocess.run
     content = b"fixture==1.0 --hash=sha256:" + b"a" * 64 + b"\n"
 
-    def run(command, **options):
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
         if command[1:3] != ["pip", "compile"] or "--show-settings" in command:
             return actual(command, **options)
         Path(command[command.index("--output-file") + 1]).write_bytes(content)
@@ -654,15 +684,15 @@ def test_lock_byte_budget_is_inclusive(adopter, source, target, tmp_path, monkey
     {"component": "../foreign"}, {"python": Path("python")}, {"expected_source": None},
 ])
 def test_invalid_source_lock_selection_refuses_before_children(
-    adopter, source, target, tmp_path, monkeypatch, selection,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: dict[str, Any],
+) -> None:
     monkeypatch.setattr(locks.subprocess, "run", lambda *args, **options: pytest.fail("invalid selection ran a child"))
     with pytest.raises(ProfileError):
         with candidate(adopter, source, target, tmp_path, **selection):
             pytest.fail("invalid selection returned a candidate")
 
 
-def test_source_mode_requires_existing_authority_request(adopter, source, target, tmp_path):
+def test_source_mode_requires_existing_authority_request(adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], tmp_path: Path) -> None:
     requested = replace(plan(adopter), source_trigger=None)
     with pytest.raises(ProfileError, match="authority"):
         with locks.retain_source_lock(

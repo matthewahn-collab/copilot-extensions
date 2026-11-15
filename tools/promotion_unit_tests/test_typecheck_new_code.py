@@ -8,7 +8,7 @@ import pytest
 
 from tools import typecheck
 from tools.typecheck_new_code import select_new_code
-from tools.typecheck_source_views import SourceViewError
+from tools.typecheck_source_views import SourceViewError, setup_program_view
 
 
 @pytest.mark.parametrize("level", ["pending", "basic", "strict"])
@@ -79,6 +79,29 @@ def test_new_code_selection_preserves_complete_composed_bindings(
     }
 
 
+@pytest.mark.parametrize("entry", ["installation_context.py", "_installation_context.py"])
+@pytest.mark.parametrize("changed", ["entry", "fragment"])
+def test_new_code_copied_fragment_selects_its_complete_owned_program(
+    tmp_path: Path, entry: str, changed: str,
+) -> None:
+    prefix = "consumer/scripts"
+    files = (
+        prefix + "/" + entry, prefix + "/_installation_context_base.py",
+        prefix + "/unrelated.py",
+    )
+    project = typecheck.Project(
+        "consumer", (prefix,), (), "pending", "3.10", ("linux",), "requirements.txt",
+    )
+    for relative in files:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"value: int = 1\n")
+    selected = files[0 if changed == "entry" else 1]
+    assert select_new_code(tmp_path, dict.fromkeys(files, project), (selected,)) == {
+        project.name: files[:2],
+    }
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -130,3 +153,22 @@ def test_new_code_empty_or_deleted_scope_does_not_run_checker(
 
     monkeypatch.setattr(typecheck, "check_project", check)
     assert typecheck.main(["--new-code"]) == 0
+
+
+@pytest.mark.parametrize("change", ["source", "output"])
+def test_independent_setup_view_refuses_changed_bound_program(
+    tmp_path: Path, change: str,
+) -> None:
+    relative = "consumer/project-name/setup.py"
+    source = tmp_path / relative
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"value: int = 1\nraise RuntimeError('never execute this build')\n")
+    view = setup_program_view(tmp_path, (relative,), tmp_path / "view" / "setup_program.py")
+    view.verify(tmp_path)
+    assert view.diagnostics(f"{view.output}:2: error: example\n", tmp_path) == (
+        relative + ":2: error: example\n"
+    )
+    changed = source if change == "source" else view.output
+    changed.write_bytes(b"value: int = 2\n")
+    with pytest.raises(SourceViewError, match="source changed|checker source changed"):
+        view.verify(tmp_path)

@@ -5,14 +5,15 @@ import argparse
 import json
 import os
 import re
-import shutil
+import shutil as shutil
 import subprocess
 import sys
-import tempfile
+import tempfile as tempfile
 import zipfile
 from pathlib import Path
+from typing import Any, cast
 from artifact_bundle_validation import (
-    _artifact_label, _digest,
+    _artifact_label, _digest as _digest,
     inspect_wheel as inspect_wheel,
     validate_artifact_entry,
     validate_bundle as validate_bundle,
@@ -23,12 +24,13 @@ from artifact_bundle_validation import (
     validate_wheel_sources as validate_wheel_sources,
 )
 from artifact_source_build import (
-    PromotionArtifactError, validate_static_build,
+    PromotionArtifactError as PromotionArtifactError, validate_static_build,
     validate_runtime_metadata as validate_runtime_metadata,
 )
 from promotion_bundle_members import _write_bundle_members, candidate_projects as candidate_projects
-from standalone_python_artifacts import COMPONENTS as COMPONENTS, artifact_label as artifact_label, project_key
-from artifact_attestation import INDEX_LIMIT as INDEX_LIMIT, INDEX_NAME, INDEX_SCHEMA as SCHEMA
+from standalone_python_artifacts import COMPONENTS as COMPONENTS, artifact_label as artifact_label, project_key as project_key
+from artifact_attestation import INDEX_LIMIT as INDEX_LIMIT, INDEX_NAME as INDEX_NAME, INDEX_SCHEMA as INDEX_SCHEMA
+SCHEMA = INDEX_SCHEMA
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "libs" / "installer-engine"))
 
@@ -42,7 +44,7 @@ _VERSION = re.compile(r"[0-9][A-Za-z0-9.+-]*")
 def _run(argv: list[str], *, cwd: Path | None = None) -> str:
     result = subprocess.run(
         argv, cwd=cwd, capture_output=True, text=True,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     if result.returncode:
         raise PromotionArtifactError(
@@ -51,7 +53,7 @@ def _run(argv: list[str], *, cwd: Path | None = None) -> str:
     return result.stdout
 
 
-def _bundle_filename(manifest: dict) -> str:
+def _bundle_filename(manifest: dict[str, Any]) -> str:
     plugin, version = _artifact_label(manifest), manifest["version"]
     artifact_id = manifest["artifact_id"]
     if (
@@ -65,14 +67,14 @@ def _bundle_filename(manifest: dict) -> str:
     return f"{plugin}-{version}-{artifact_id[7:]}.zip"
 
 
-def bundle_wheels(manifest: dict, wheel_dir: Path, out_dir: Path) -> dict:
+def bundle_wheels(manifest: dict[str, Any], wheel_dir: Path, out_dir: Path) -> dict[str, Any]:
     """Bundle only the builder's declared first-party wheels and manifest."""
     filename = _bundle_filename(manifest)
     destination = out_dir / filename
 
     # Wheels are already compressed; storing them avoids zlib-version drift too.
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_STORED) as bundle:
-        def write_wheel(wheel, info):
+        def write_wheel(wheel: dict[str, Any], info: zipfile.ZipInfo) -> None:
             name = wheel["filename"]
             path = wheel_dir / name
             try:
@@ -146,11 +148,11 @@ def build_candidate_bundles(
                 shutil.rmtree(wheel_dir)
                 continue
             standalone = plugin.startswith("standalone:")
-            component = plugin.split(":", 1)[1] if standalone else None
-            wheel_dir = out_dir / (f"standalone-{component}" if standalone else plugin)
+            build_component = plugin.split(":", 1)[1] if standalone else None
+            wheel_dir = out_dir / (f"standalone-{build_component}" if standalone else plugin)
             manifest = (
                 build_standalone_artifacts(
-                    component, out_dir=wheel_dir, toolchain=toolchain, builder=builder,
+                    cast(str, build_component), out_dir=wheel_dir, toolchain=toolchain, builder=builder,
                 ) if standalone else builder.build_plugin_artifacts(
                     plugin, out_dir=wheel_dir, toolchain=toolchain,
                 )
@@ -168,7 +170,7 @@ def export_artifacts(
     *, repo: Path, commit: str, content_tree: str, dev_head: str, main_before: str,
     out_dir: Path, source_policy: str = "governed", min_age_days: int | None = None,
     reuse_repository: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build in a disposable candidate checkout; never mutate the promoted tree."""
     import promote_release as promotion
 
@@ -198,7 +200,7 @@ def export_artifacts(
             )
             if reused is not None:
                 staging.rename(out_dir)
-                return reused
+                return cast(dict[str, Any], reused)
         argv = [
             sys.executable, str(Path(__file__).resolve()),
             "--repo", str(candidate), "--out-dir", str(staging), "--toolchain-source", source_policy,
@@ -255,7 +257,7 @@ def validate_composed_artifacts(
     directory: Path, *, scratch: Path, content_tree: str,
     dev_head: str, main_before: str,
     source_policy: str | None = None, min_age_days: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Validate a composed index through its canonical checkout representation."""
     if not isinstance(content_tree, str) or not _SHA.fullmatch(content_tree):
         raise PromotionArtifactError("invalid composed source tree identity")
@@ -282,7 +284,7 @@ def validate_composed_artifacts(
 def validate_candidate_artifacts(
     directory: Path, *, repo: Path, dev_head: str, main_before: str,
     source_policy: str | None = None, min_age_days: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Recompose with trusted tools; candidate checkouts supply only source data."""
     import promote_release as promotion
 
@@ -315,7 +317,7 @@ def validate_artifacts(
     projects: dict[str, str] | None = None,
     candidate_root: Path | None = None,
     source_policy: str | None = None, min_age_days: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Validate transfer and exact composition binding, not signer authenticity."""
     try:
         index_path = directory / INDEX_NAME

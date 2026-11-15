@@ -1,4 +1,39 @@
 """Optional real Manager adapter/constructor contract with a synthetic closure."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from typing import Protocol
+    from types import ModuleType
+
+    class _LegacyManagerSource(Protocol):
+        def __call__(self, tmp_path: Path, version: str = "1.2.3-dev1") -> tuple[Path, Path, Path]: ...
+
+    class _LegacyAttributeSource(Protocol):
+        def __call__(self, adapter: ModuleType, payload: Path, version: str = "1.2.3-dev1") -> str: ...
+
+if TYPE_CHECKING:
+    from typing import Any, Callable, Protocol
+    from pathlib import Path
+    class _CopyPayload(Protocol):
+        def __call__(self, payload_dir: Path, slot: Path, *, mark_complete: bool = True, on_progress: Callable[[], None] | None = None) -> None: ...
+
+if TYPE_CHECKING:
+    from typing import Any, Callable, Protocol
+    from types import ModuleType
+
+from typing import cast
+
+
+if TYPE_CHECKING:
+    from worktree_manager.self_install import SelfInstallResult
+from typing import Any, Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from test_runtime_profile_policy import _Adopter
+    from worktree_manager.runtime_source_config import RuntimeSource
 import importlib.util
 import json
 import os
@@ -7,7 +42,10 @@ import shutil
 import subprocess
 import sys
 import time
-import tomllib
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 from dataclasses import asdict, replace
 
 import pytest
@@ -29,10 +67,10 @@ from test_manager_engine_adapter import _attribute_source, _closed_inputs, _sour
 from worktree_manager import self_install as si
 
 
-def manager_source(adopter, configured_source, monkeypatch):
+def manager_source(adopter: _Adopter, configured_source: tuple[Path, Path, str, RuntimeSource], monkeypatch: pytest.MonkeyPatch) -> Path:
     root, repository, _, _ = configured_source
     installation = adopter[1]
-    installation.update(plugin_id="worktree-manager", legacy_root=root)
+    cast(dict[str, Any], installation).update(plugin_id="worktree-manager", legacy_root=root)
     payload = installation["payload_root"].with_name("worktree-manager")
     payload.mkdir()
     installation["payload_root"] = payload
@@ -40,7 +78,7 @@ def manager_source(adopter, configured_source, monkeypatch):
     settings["enabledPlugins"] = {key.replace("agent-example@", "worktree-manager@"): value
                                   for key, value in settings["enabledPlugins"].items()}
     adopter[2].write_text(json.dumps(settings))
-    project, _, _ = _source(repository, version="1.2.3.dev1")
+    project, _, _ = cast("_LegacyManagerSource", _source)(repository, version="1.2.3.dev1")
     project.rename(repository / "worktree-manager")
     project = repository / "worktree-manager"
     procutil = project / "libs" / "agent-procutil"
@@ -72,7 +110,7 @@ def manager_source(adopter, configured_source, monkeypatch):
         "runtime_launcher.py", "versioned_runtime.py", "versioned_runtime_leases.py",
         "versioned_runtime_source.py", "versioned_runtime_construction.py", "versioned_runtime_publication.py",
     ):
-        shutil.copyfile(Path(si._runtime_installer().__file__).with_name(name), scripts / name)
+        shutil.copyfile(Path(cast(str, cast("Callable[[], ModuleType]", si._runtime_installer)().__file__)).with_name(name), scripts / name)
     references = project / "references"
     references.mkdir()
     shutil.copyfile(
@@ -92,8 +130,8 @@ def manager_source(adopter, configured_source, monkeypatch):
 
 @pytest.mark.parametrize("uv_selection", ["absolute", "command"])
 def test_manager_source_warm_install_in_a_new_process_never_resolves_or_rebuilds(
-    tmp_path, monkeypatch, adopter, configured_source, target, feeds, uv_selection,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adopter: _Adopter, configured_source: tuple[Path, Path, str, RuntimeSource], target: dict[str, Any], feeds: Callable[..., dict[str, Any]], uv_selection: str,
+) -> None:
     import hashlib
 
     root = manager_source(adopter, configured_source, monkeypatch)
@@ -105,7 +143,7 @@ def test_manager_source_warm_install_in_a_new_process_never_resolves_or_rebuilds
     arguments = options(adopter, target, env)
     attempts = 0
 
-    def install():
+    def install() -> SelfInstallResult:
         nonlocal attempts
         attempts += 1
         started = time.monotonic()
@@ -136,7 +174,7 @@ def test_manager_source_warm_install_in_a_new_process_never_resolves_or_rebuilds
     except subprocess.CalledProcessError as error:
         pytest.fail(error.stderr or str(error))
     assert first.action == "installed", first.reason
-    slot = Path(first.slot)
+    slot = Path(cast(str, first.slot))
     marker = builds.engine.runtime.marker_path(root, slot.name)
     before = marker.read_bytes(), marker.stat().st_mtime_ns
     receipt = (slot / ".runtime-input-origins.json").read_bytes()
@@ -194,7 +232,7 @@ print(json.dumps(asdict(result)))
     second = subprocess.run(
         [sys.executable, "-I", "-B", "-c", script, str(_ROOT), json.dumps(specification, default=str)],
         capture_output=True, text=True, timeout=90,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     print(f"manager-source-native: {uv_selection} fresh-process reuse "
           f"elapsed={time.monotonic() - warm_started:.3f}s", flush=True)
@@ -221,11 +259,11 @@ print(json.dumps(asdict(result)))
         integrity.setattr(builds, "retain_source_runtime_inputs", lambda *args, **kwargs: pytest.fail(
             "corrupt input evidence reached cold source admission",
         ))
-        for path, content in (
+        for evidence_path, content in (
             (proof, json.dumps(corrupted)), (origin, json.dumps(changed_digest)), (origin, "{"),
         ):
-            original = path.read_bytes()
-            path.write_text(content)
+            original = evidence_path.read_bytes()
+            evidence_path.write_text(content)
             try:
                 # Completion may authenticate these bytes before the detailed input owner.
                 with pytest.raises(
@@ -237,11 +275,11 @@ print(json.dumps(asdict(result)))
                 assert (marker.read_bytes(), marker.stat().st_mtime_ns) == before
                 assert len(state["requests"]) == requests
             finally:
-                path.write_bytes(original)
+                evidence_path.write_bytes(original)
     installed_module = site / "worktree_manager" / "__init__.py"
     original_module = installed_module.read_bytes()
     with monkeypatch.context() as health:
-        def needs_source(*args, **kwargs):
+        def needs_source(*args: object, **kwargs: object) -> None:
             raise RuntimeError("genuine installed health needs source admission")
 
         health.setattr(builds, "retain_source_runtime_inputs", needs_source)
@@ -256,7 +294,7 @@ print(json.dumps(asdict(result)))
     assert len(state["requests"]) == requests
     assert proof.read_bytes() == receipt and origin.read_bytes() == installed_origin
     with monkeypatch.context() as authentication:
-        def changed_account(*args, **kwargs):
+        def changed_account(*args: object, **kwargs: object) -> None:
             raise RuntimeError("changed authenticated account requires ordinary source admission")
 
         authentication.setattr(builds, "retain_source_runtime_inputs", changed_account)
@@ -271,7 +309,7 @@ print(json.dumps(asdict(result)))
     assert len(state["requests"]) == requests
     environment(adopter, state, tmp_path, authenticate="auto", resolution="lowest")
 
-    def requires_source(*args, **kwargs):
+    def requires_source(*args: object, **kwargs: object) -> None:
         raise RuntimeError("changed resolver mode requires ordinary source admission")
 
     monkeypatch.setattr(builds, "retain_source_runtime_inputs", requires_source)
@@ -288,9 +326,9 @@ print(json.dumps(asdict(result)))
     assert len(state["requests"]) == requests
 
 
-def test_manager_closed_native(tmp_path, monkeypatch):
-    adapter = si._runtime_installer()
-    payload, root, _ = _source(tmp_path, version="1.2.3.dev1")
+def test_manager_closed_native(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = cast("Callable[[], ModuleType]", si._runtime_installer)()
+    payload, root, _ = cast("_LegacyManagerSource", _source)(tmp_path, version="1.2.3.dev1")
     canonical = _ROOT / "libs" / "agent-procutil"
     procutil = payload / "libs" / "agent-procutil"
     shutil.copytree(canonical / "src", procutil / "src")
@@ -323,10 +361,11 @@ def test_manager_closed_native(tmp_path, monkeypatch):
         "versioned_runtime_source.py", "versioned_runtime_construction.py",
         "versioned_runtime_publication.py",
     ):
-        shutil.copyfile(Path(adapter.__file__).with_name(name), scripts / name)
-    _attribute_source(adapter, payload, version="1.2.3.dev1")
+        shutil.copyfile(Path(cast(str, adapter.__file__)).with_name(name), scripts / name)
+    cast("_LegacyAttributeSource", _attribute_source)(adapter, payload, version="1.2.3.dev1")
     fixture = Path(__file__).parent / "fixtures" / "source-runtime-backend.py"
     spec = importlib.util.spec_from_file_location("manager_fixture_backend", fixture)
+    assert spec is not None and spec.loader is not None
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
     with monkeypatch.context() as building:
@@ -342,8 +381,8 @@ def test_manager_closed_native(tmp_path, monkeypatch):
     extra = (("agent-procutil", procutil_version, procutil_filename,
               (tmp_path / procutil_filename).read_bytes()),)
     with _closed_inputs(tmp_path, content, extra) as wheels:
-        options = dict(
-            assemble=si._copy_payload, uv=Path(uv), wheel_inputs=wheels,
+        options: dict[str, Any] = dict(
+            assemble=cast("_CopyPayload", getattr(si, "_copy_payload")), uv=Path(uv), wheel_inputs=wheels,
             local_packages=("agent-procutil", "copilot-extensions-worktree-manager"),
         )
         with adapter.candidate(payload, root, **options) as ready:
@@ -366,7 +405,7 @@ def test_manager_closed_native(tmp_path, monkeypatch):
         changed = replace(wheels, binding_json='{"fixture":"changed-policy"}')
         visited = []
 
-        def refuse(candidate):
+        def refuse(candidate: Path) -> None:
             visited.append(candidate)
             raise RuntimeError("fixture publication policy changed")
 

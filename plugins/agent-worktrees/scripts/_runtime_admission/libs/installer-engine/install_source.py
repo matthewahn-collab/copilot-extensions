@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+from collections.abc import Iterator
 import argparse
 from dataclasses import dataclass
 import hashlib
@@ -13,15 +14,18 @@ import re
 import sys
 import time
 import uuid
+from typing import Any, cast
 
 _SCRIPTS = Path(__file__).resolve().parent
 if _SCRIPTS.name == "installer-engine" and _SCRIPTS.parent.name == "libs":
     sys.path.insert(0, str(_SCRIPTS.parent / "versioned-runtime"))
 sys.path.insert(0, str(_SCRIPTS))
-import installer_engine as engine
+import installer_engine as installer_engine
+engine = installer_engine
 from installer_wheel_inputs import WheelLimits, inspect_archive
-from installer_wheel_snapshot import WheelReuseInputs, retain_wheel_inputs
-import versioned_runtime_source as sources
+from installer_wheel_snapshot import WheelInstallInputs, WheelReuseInputs, retain_wheel_inputs
+import versioned_runtime_source as versioned_runtime_source
+sources = versioned_runtime_source
 
 SCHEMA = "copilot-extensions.install-source"
 MANIFEST = "install-source.json"
@@ -39,15 +43,15 @@ class _ApplicationDeclarationConflict(engine.ContentRepairRequired):
 class ProjectSource:
     payload: Path
     identity: sources.SourceIdentity
-    record: dict
+    record: dict[str, Any]
     project_key: str
 
     @property
-    def project(self) -> dict:
-        return self.record["projects"][self.project_key]
+    def project(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.record["projects"][self.project_key])
 
     @property
-    def source_descriptor(self) -> dict | None:
+    def source_descriptor(self) -> dict[str, Any] | None:
         descriptor = self.record.get("source_descriptor")
         if descriptor is not None and (
             not isinstance(descriptor, dict) or set(descriptor) != {"kind", "canonical", "ref"}
@@ -60,7 +64,7 @@ class ProjectSource:
         return descriptor
 
     @property
-    def composition(self) -> dict | None:
+    def composition(self) -> dict[str, Any] | None:
         if "composition" not in self.record:
             return None
         composition = self.record["composition"]
@@ -78,7 +82,7 @@ class ProjectSource:
         return dict(composition)
 
 
-def _read(path: Path) -> dict:
+def _read(path: Path) -> dict[str, Any]:
     if path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400:
         raise ValueError("installation input must not be linked")
     if not path.is_file() or path.stat().st_size > 4 << 20:
@@ -93,7 +97,7 @@ def _read(path: Path) -> dict:
     return record
 
 
-def _member(root: Path, name: str) -> Path:
+def _member(root: Path, name: object) -> Path:
     if not isinstance(name, str):
         raise ValueError("installation input has no relative member")
     relative = PurePosixPath(name)
@@ -161,7 +165,7 @@ def select(snapshot: Path) -> ProjectSource:
 def wheel_inputs(
     profile_path: Path, wheel_directory: Path, *, deadline: float | None = None,
     expected_profile_sha256: str | None = None,
-):
+) -> Iterator[WheelInstallInputs]:
     """Retain an independently admitted profile; this receiver grants no approval."""
     if not profile_path.is_absolute() or not wheel_directory.is_absolute():
         raise ValueError("wheel inputs require absolute profile and directory paths")
@@ -176,7 +180,8 @@ def wheel_inputs(
     rows = profile.get("wheels")
     if not isinstance(rows, list) or not rows or len(rows) > 256:
         raise ValueError("project requires a complete bounded wheel profile")
-    archives, expected = {}, {}
+    archives: dict[str, Path] = {}
+    expected: dict[str, Any] = {}
     for row in rows:
         if not isinstance(row, dict) or row.get("filename") in archives:
             raise ValueError("project wheel profile has invalid or duplicate inputs")
@@ -194,7 +199,7 @@ def wheel_inputs(
         archives, expected, max_wheels=256, max_archive_bytes=128 << 20,
         max_total_bytes=512 << 20, max_snapshot_bytes=1 << 30, deadline=deadline,
     ) as retained:
-        distributions = []
+        distributions: list[tuple[str, str, str, str]] = []
         expanded = 0
         for row in rows:
             facts = inspect_archive(
@@ -214,10 +219,10 @@ def wheel_inputs(
             distributions.append((
                 row["name"], row["version"], row["filename"], row["sha256"],
             ))
-        inputs = engine.WheelInstallInputs(
+        inputs = cast(WheelInstallInputs, getattr(engine, "WheelInstallInputs")(
             retained, json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False),
             tuple(distributions),
-        )
+        ))
         inputs.verify()
         yield inputs
         inputs.verify()
@@ -226,7 +231,9 @@ def wheel_inputs(
 
 
 @contextmanager
-def project_inputs(snapshot: Path, component: str, *, deadline: float | None = None):
+def project_inputs(
+    snapshot: Path, component: str, *, deadline: float | None = None,
+) -> Iterator[tuple[ProjectSource, WheelInstallInputs]]:
     """Hold the prepared complete wheel set through canonical installed health."""
     selected = select_project(snapshot, component)
     composition = selected.composition
@@ -255,12 +262,14 @@ def project_inputs(snapshot: Path, component: str, *, deadline: float | None = N
 
 
 @contextmanager
-def manager_inputs(snapshot: Path, *, deadline: float | None = None):
+def manager_inputs(
+    snapshot: Path, *, deadline: float | None = None,
+) -> Iterator[tuple[ProjectSource, WheelInstallInputs]]:
     with project_inputs(snapshot, "worktree-manager", deadline=deadline) as inputs:
         yield inputs
 
 
-def _wheel_selection(payload: Path, version: str, inputs: engine.WheelInstallInputs) -> dict:
+def _wheel_selection(payload: Path, version: str, inputs: WheelInstallInputs) -> dict[str, Any]:
     inputs.verify()
     receipt = inputs.receipt()
     packages = engine._package_roots(payload)
@@ -286,7 +295,7 @@ def _wheel_selection(payload: Path, version: str, inputs: engine.WheelInstallInp
     }
 
 
-def wheel_selection(payload: Path, component: str, inputs: engine.WheelInstallInputs) -> dict:
+def wheel_selection(payload: Path, component: str, inputs: WheelInstallInputs) -> dict[str, Any]:
     version = sources.payload_package_version(payload, component)
     if sources.read_source_identity(payload, version, plugin=component) is not None:
         raise ValueError("Source payloads require their installation-source association")
@@ -369,7 +378,7 @@ def native_current(root: Path, payload: Path, component: str) -> bool:
         return False
 
 
-def native_selection(selected: ProjectSource, inputs: engine.WheelInstallInputs) -> dict:
+def native_selection(selected: ProjectSource, inputs: WheelInstallInputs) -> dict[str, Any]:
     """Use the constructor's existing source/profile identity before native setup."""
     selection = _wheel_selection(selected.payload, selected.identity.runtime_version, inputs)
     distributions = inputs.receipt()["distributions"]
@@ -398,7 +407,7 @@ def native_selection(selected: ProjectSource, inputs: engine.WheelInstallInputs)
     }
 
 
-def application_inputs(selected: ProjectSource, inputs: engine.WheelInstallInputs) -> dict:
+def application_inputs(selected: ProjectSource, inputs: WheelInstallInputs) -> dict[str, Any]:
     """Carry the actual Source constructor's facts into a copyable application."""
     selection = native_selection(selected, inputs)
     packages = engine._package_roots(selected.payload)
@@ -421,7 +430,7 @@ def install_application(
     uv: Path, base_python: Path, health_module: str,
     expected_version: str, expected_hash: str, arguments: tuple[str, ...] = (),
     repair: bool = False,
-) -> dict:
+) -> dict[str, str]:
     """Compose existing construction and application owners for a prepared source.
 
     The caller retains independent source approval through this call. Snapshot
@@ -465,7 +474,7 @@ def install_application(
             if current and re.fullmatch(re.escape(expected_version) + r"\.repair\.[0-9a-f]{32}", current):
                 version = current
 
-        def validate(slot):
+        def validate(slot: Path) -> None:
             try:
                 installed = _read(slot / "application.json")
             except (FileNotFoundError, ValueError, UnicodeError) as error:
@@ -486,7 +495,7 @@ def install_application(
                     "select a distinct repair generation"
                 )
 
-        candidate_options = {"health_module": health_module}
+        candidate_options: dict[str, Any] = {"health_module": health_module}
         if component == "agent-worktrees":
             identity = selection["identity"]["runtime_source"]
             candidate_options.update(
@@ -594,7 +603,7 @@ def native_session(
 
 
 def _native_candidate_session(
-    payload: Path, root: Path, inputs: engine.WheelInstallInputs, selection: dict, *,
+    payload: Path, root: Path, inputs: WheelInstallInputs, selection: dict[str, Any], *,
     uv: Path, base_python: Path, health_module: str, expected_version: str, expected_hash: str,
     repair: bool = False, application: Path | None = None,
     nested_environment: bool = False,

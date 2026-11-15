@@ -1,6 +1,30 @@
 """Actual source-built closures and the existing offline immutable constructor."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any, Callable, Mapping, Protocol
+    class _LegacySourceProject(Protocol):
+        def __call__(self, path: Path, name: str = "fixture-source", sources: str = "", dependencies: str = "", module_code: str | None = None) -> Path: ...
+    class _LegacyWheelBytes(Protocol):
+        def __call__(self, *, metadata: bytes | None = None, wheel: bytes | None = None, extra: Mapping[str, bytes] | None = None, record_mutator: Callable[[list[list[str]]], object] | None = None, compression: int = ..., prefix: str = "demo_pkg-1.0.dist-info/", name: str = "demo_pkg") -> bytes: ...
+
+from typing import cast
+
+from typing import Iterator
+
+if TYPE_CHECKING:
+    from installer_engine import ReadyCandidate
+
+
+
+from typing import Any, Callable
+
+if TYPE_CHECKING:
+    from test_runtime_profile_policy import _Adopter
+    from versioned_runtime_source import SourceIdentity
+
 from dataclasses import replace
 from contextlib import contextmanager
 import hashlib
@@ -34,7 +58,7 @@ from wheel_input_fixture import wheel_bytes
 
 
 @pytest.mark.parametrize("refuse", [None, ProfileError, KeyboardInterrupt])
-def test_library_builds_overlap_with_owner_validation_and_complete_settlement(refuse):
+def test_library_builds_overlap_with_owner_validation_and_complete_settlement(refuse: type[BaseException] | None) -> None:
     owner = threading.get_ident()
     fourth_started = threading.Event()
     first_checked = threading.Event()
@@ -42,7 +66,7 @@ def test_library_builds_overlap_with_owner_validation_and_complete_settlement(re
     started, settled, checked = [], [], []
     active, peak = 0, 0
 
-    def build(project, validate):
+    def build(project: int, validate: completion._OwnerValidation) -> int:
         nonlocal active, peak
         with lock:
             started.append(project)
@@ -55,7 +79,7 @@ def test_library_builds_overlap_with_owner_validation_and_complete_settlement(re
             if project:
                 assert first_checked.wait(5)
 
-            def verify():
+            def verify() -> None:
                 assert threading.get_ident() == owner
                 checked.append(project)
                 if project == 0:
@@ -72,11 +96,11 @@ def test_library_builds_overlap_with_owner_validation_and_complete_settlement(re
 
     if refuse:
         with pytest.raises(refuse, match="current inputs refused"):
-            completion._build_libraries(tuple(range(8)), build)
+            completion._build_libraries(cast(tuple[Path, ...], tuple(range(8))), cast("Callable[[Path, completion._OwnerValidation], int]", build))
         assert set(started) == set(range(4))
         assert checked == [0]
     else:
-        assert completion._build_libraries(tuple(range(8)), build) == [
+        assert completion._build_libraries(cast(tuple[Path, ...], tuple(range(8))), cast("Callable[[Path, completion._OwnerValidation], int]", build)) == [
             project * 10 for project in range(8)
         ]
         assert set(checked) == set(range(8))
@@ -84,23 +108,26 @@ def test_library_builds_overlap_with_owner_validation_and_complete_settlement(re
     assert peak == 4 and active == 0
 
 
-def test_library_dispatch_cancellation_settles_even_a_dequeued_validation(monkeypatch):
+def test_library_dispatch_cancellation_settles_even_a_dequeued_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     four_started = threading.Event()
     four_requested = threading.Event()
     lock = threading.Lock()
     started, requested, settled, checked = [], [], [], []
-    queue = completion.Queue
+    from typing import TypeAlias
+    from concurrent.futures import Future
+
+    queue: TypeAlias = completion.Queue[tuple[Callable[[], object] | None, Future[object]]]
 
     class InterruptedQueue(queue):
-        def put(self, value, *args, **kwargs):
-            if value[0] is not None:
+        def put(self, item: tuple[Callable[[], object] | None, Future[object]], *args: Any, **kwargs: Any) -> None:
+            if item[0] is not None:
                 with lock:
-                    requested.append(value[1])
+                    requested.append(item[1])
                     if len(requested) == 4:
                         four_requested.set()
-            return super().put(value, *args, **kwargs)
+            return super().put(item, *args, **kwargs)
 
-        def get(self, *args, **kwargs):
+        def get(self, *args: Any, **kwargs: Any) -> tuple[Callable[[], object] | None, Future[object]]:
             value = super().get(*args, **kwargs)
             if value[0] is not None:
                 assert four_requested.wait(5)
@@ -109,7 +136,7 @@ def test_library_dispatch_cancellation_settles_even_a_dequeued_validation(monkey
 
     monkeypatch.setattr(completion, "Queue", InterruptedQueue)
 
-    def build(project, validate):
+    def build(project: int, validate: completion._OwnerValidation) -> int:
         with lock:
             started.append(project)
             if len(started) == 4:
@@ -123,7 +150,7 @@ def test_library_dispatch_cancellation_settles_even_a_dequeued_validation(monkey
                 settled.append(project)
 
     with pytest.raises(KeyboardInterrupt, match="dequeued validation interrupted"):
-        completion._build_libraries(tuple(range(8)), build)
+        completion._build_libraries(cast(tuple[Path, ...], tuple(range(8))), cast("Callable[[Path, completion._OwnerValidation], int]", build))
     assert set(started) == set(range(4))
     assert set(settled) == set(started)
     assert len(requested) == 4
@@ -173,13 +200,13 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
 
 
 @pytest.fixture
-def source(tmp_path):
-    payload = source_project(
+def source(tmp_path: Path) -> tuple[Path, SourceIdentity]:
+    payload = cast("_LegacySourceProject", source_project)(
         tmp_path / "payload", dependencies='"fixture-helper[metrics]==1.0", "agent-procutil"',
     )
     (payload / "fixture_backend.py").write_text(BACKEND, encoding="utf-8")
     (payload / "module.py").write_text("from fixture_helper import VALUE\n", encoding="utf-8")
-    helper = source_project(payload / "libs" / "helper", name="fixture-helper")
+    helper = cast("_LegacySourceProject", source_project)(payload / "libs" / "helper", name="fixture-helper")
     (helper / "fixture_backend.py").write_text(BACKEND, encoding="utf-8")
     (helper / "module.py").write_text("VALUE = 42\n", encoding="utf-8")
     with (helper / "pyproject.toml").open("a") as stream:
@@ -211,12 +238,12 @@ def source(tmp_path):
 
 
 @pytest.fixture
-def target():
+def target() -> dict[str, Any]:
     return {"environment": default_environment(), "tags": ["py3-none-any"], "device": "cpu"}
 
 
 @pytest.fixture
-def toolchain():
+def toolchain() -> ToolchainLock:
     # The fixture backend is stdlib-only; no tool installation or feed access.
     return ToolchainLock(
         Path(sys.executable), {"setuptools": "0", "wheel": "0", "packaging": "0"},
@@ -226,8 +253,8 @@ def toolchain():
 
 
 @pytest.fixture
-def built_wheels(monkeypatch):
-    def build(project, output, **_options):
+def built_wheels(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Path]:
+    def build(project: Path, output: Path, **_options: object) -> Path:
         data = completion._toml(project / "pyproject.toml")["project"]
         name, version = data["name"].replace("-", "_"), data["version"].replace("-", ".")
         metadata = f"Metadata-Version: 2.3\nName: {data['name']}\nVersion: {version}\n"
@@ -242,7 +269,7 @@ def built_wheels(monkeypatch):
                 metadata += f"Requires-Dist: {base.strip()}; {condition}extra == '{extra}'\n"
         output.mkdir(parents=True, exist_ok=True)
         wheel = output / f"{name}-{version}-py3-none-any.whl"
-        wheel.write_bytes(wheel_bytes(
+        wheel.write_bytes(cast("_LegacyWheelBytes", wheel_bytes)(
             name=name, prefix=f"{name}-{version}.dist-info/", metadata=metadata.encode(),
             wheel=b"Wheel-Version: 1.0\nGenerator: setuptools (0)\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         ))
@@ -252,16 +279,16 @@ def built_wheels(monkeypatch):
     return build
 
 
-def arguments(toolchain, **changes):
+def arguments(toolchain: ToolchainLock, **changes: Any) -> dict[str, Any]:
     return dict(
-        uv=shutil.which("uv"), toolchain=toolchain,
+        uv=cast(str, shutil.which("uv")), toolchain=toolchain,
         limits=completion.WheelLimits(1 << 20, 1 << 22, 1 << 20, 1 << 18, 1000, 100, 1 << 16),
         max_wheels=4, max_total_bytes=1 << 21, max_snapshot_bytes=1 << 21,
         deadline=time.monotonic() + 60,
     ) | changes
 
 
-def selected_source(source, target, adopter):
+def selected_source(source: tuple[Path, SourceIdentity], target: dict[str, Any], adopter: _Adopter) -> SourceLockCandidate:
     roots = completion._package_roots(source[0])
     record = {
         "schema": "copilot-extensions.source-lock-candidate", "version": 1,
@@ -280,14 +307,14 @@ def selected_source(source, target, adopter):
 
 @pytest.mark.parametrize("failure", [None, "missing", "wrong-project"])
 def test_associated_wheels_complete_real_source_profile_without_backend_work(
-    adopter, source, target, toolchain, tmp_path, monkeypatch, built_wheels, failure,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path], failure: None | str,
+) -> None:
     candidate = selected_source(source, target, adopter)
     projects = completion._selected_projects(
         completion._package_roots(source[0]), "fixture-source", (),
         target["environment"], time.monotonic() + 60,
     )
-    associated = {
+    associated: dict[str, Path] = {
         completion.canonicalize_name(completion._toml(path / "pyproject.toml")["project"]["name"]):
             built_wheels(path, tmp_path / "associated")
         for path in projects
@@ -300,7 +327,7 @@ def test_associated_wheels_complete_real_source_profile_without_backend_work(
         "an associated-wheel installation must not execute a backend",
     ))
 
-    def consume():
+    def consume() -> None:
         with completion.retain_source_profile(
             candidate, third_party={}, first_party=associated, **arguments(toolchain),
         ) as prepared:
@@ -318,8 +345,8 @@ def test_associated_wheels_complete_real_source_profile_without_backend_work(
 
 @pytest.mark.parametrize("uv_selection", ["absolute", "path"])
 def test_native_source_lock_completes_helpers_extras_before_existing_offline_constructor(
-    adopter, source, target, toolchain, tmp_path, monkeypatch, uv_selection,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_selection: str,
+) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] /
                                     "plugins" / "agent-worktrees" / "scripts"))
     deadline = time.monotonic() + 180
@@ -330,14 +357,14 @@ def test_native_source_lock_completes_helpers_extras_before_existing_offline_con
         builder = completion.build_wheel
         build_executables = []
 
-        def observed_build(*args, **options):
+        def observed_build(*args: Path, **options: Any) -> Path:
             build_executables.append(options["uv"])
             return builder(*args, **options)
 
         monkeypatch.setattr(completion, "build_wheel", observed_build)
 
         @contextmanager
-        def observed(*args, **kwargs):
+        def observed(*args: Any, **kwargs: Any) -> Iterator[ReadyCandidate]:
             binding = kwargs["wheel_inputs"].receipt()["binding"]
             record = binding["profile"]
             assert record["mode"] == "source" and record["artifact"] is None
@@ -367,7 +394,7 @@ def test_native_source_lock_completes_helpers_extras_before_existing_offline_con
             proof = subprocess.run(
                 [str(python), "-I", "-c", "from fixture_source import VALUE; print(VALUE)"],
                 capture_output=True, text=True, timeout=15,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
             )
             assert proof.returncode == 0, proof.stderr
             assert proof.stdout.strip() == "42"
@@ -377,8 +404,8 @@ def test_native_source_lock_completes_helpers_extras_before_existing_offline_con
 
 @pytest.mark.parametrize("change", ["requirements", "source", "missing-pin", "wrong-hash", "extra-wheel"])
 def test_incomplete_or_changed_source_lock_refuses_before_build(
-    adopter, source, target, toolchain, tmp_path, monkeypatch, change,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
     candidate = selected_source(source, target, adopter)
     paths = {}
     if change == "requirements":
@@ -387,7 +414,7 @@ def test_incomplete_or_changed_source_lock_refuses_before_build(
         (source[0] / "module.py").write_text("changed")
     else:
         path = tmp_path / "fixture_registry-1.0-py3-none-any.whl"
-        path.write_bytes(wheel_bytes(
+        path.write_bytes(cast("_LegacyWheelBytes", wheel_bytes)(
             name="fixture_registry", prefix="fixture_registry-1.0.dist-info/",
             metadata=b"Metadata-Version: 2.3\nName: fixture-registry\nVersion: 1.0\n\n",
         ))
@@ -404,12 +431,12 @@ def test_incomplete_or_changed_source_lock_refuses_before_build(
 
 
 def test_actual_metadata_cannot_drop_selected_helper_extra(
-    adopter, source, target, toolchain, tmp_path, monkeypatch, built_wheels,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path],
+) -> None:
     candidate = selected_source(source, target, adopter)
     original = completion._extras
 
-    def drop(wheels, roots, environment, deadline):
+    def drop(wheels: dict[str, dict[str, Any]], roots: list[str], environment: dict[str, str], deadline: float) -> dict[str, set[str]]:
         result = original(wheels, roots, environment, deadline)
         result["fixture-helper"] = set()
         return result
@@ -421,11 +448,11 @@ def test_actual_metadata_cannot_drop_selected_helper_extra(
 
 
 def test_built_metadata_cannot_drop_source_declared_dependency_extra(
-    adopter, source, target, toolchain, monkeypatch, built_wheels,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path],
+) -> None:
     candidate = selected_source(source, target, adopter)
 
-    def altered(project, output, **options):
+    def altered(project: Path, output: Path, **options: Any) -> Path:
         path = built_wheels(project, output, **options)
         if project == source[0]:
             with zipfile.ZipFile(path) as archive:
@@ -434,7 +461,7 @@ def test_built_metadata_cannot_drop_source_declared_dependency_extra(
                     b"fixture-helper[metrics]==1.0", b"fixture-helper==1.0",
                 )
                 headers = archive.read(prefix + "WHEEL")
-            path.write_bytes(wheel_bytes(
+            path.write_bytes(cast("_LegacyWheelBytes", wheel_bytes)(
                 name="fixture_source", prefix=prefix, metadata=metadata, wheel=headers,
             ))
         return path
@@ -447,8 +474,8 @@ def test_built_metadata_cannot_drop_source_declared_dependency_extra(
 
 @pytest.mark.parametrize("origin", ["third-party", "built"])
 def test_source_wheel_ingestion_bounds_filename_before_open_or_expansion(
-    adopter, source, target, toolchain, monkeypatch, tmp_path, origin,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, origin: str,
+) -> None:
     candidate = selected_source(source, target, adopter)
     tags = ".".join("t" + str(index) for index in range(8))
     path = tmp_path / f"fixture_source-1.0.0-{tags}-{tags}-{tags}.whl"
@@ -462,7 +489,7 @@ def test_source_wheel_ingestion_bounds_filename_before_open_or_expansion(
             pytest.fail("excessive filename tags reached construction")
 
 
-def test_source_digest_rejects_actual_fifo_without_opening(tmp_path, monkeypatch):
+def test_source_digest_rejects_actual_fifo_without_opening(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if not hasattr(os, "mkfifo"):
         pytest.skip("native FIFO creation is POSIX-only")
     path = tmp_path / "fifo-1.0-py3-none-any.whl"
@@ -473,27 +500,27 @@ def test_source_digest_rejects_actual_fifo_without_opening(tmp_path, monkeypatch
 
 
 def test_source_generator_is_read_only_after_bounded_metadata_inspection(
-    adopter, source, target, toolchain, monkeypatch, built_wheels,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path],
+) -> None:
     candidate = selected_source(source, target, adopter)
     original_read = zipfile.ZipFile.read
     budget = arguments(toolchain)["limits"].max_metadata_member_bytes
 
-    def altered(project, output, **options):
+    def altered(project: Path, output: Path, **options: Any) -> Path:
         path = built_wheels(project, output, **options)
         data = completion._toml(project / "pyproject.toml")["project"]
         name, version = data["name"].replace("-", "_"), data["version"].replace("-", ".")
         prefix = f"{name}-{version}.dist-info/"
         with zipfile.ZipFile(path) as archive:
             metadata = original_read(archive, prefix + "METADATA")
-        path.write_bytes(wheel_bytes(
+        path.write_bytes(cast("_LegacyWheelBytes", wheel_bytes)(
             name=name, prefix=prefix, metadata=metadata,
             wheel=b"Wheel-Version: 1.0\nGenerator: setuptools (0)\n\n" + b"x" * budget,
         ))
         return path
 
-    def guarded_read(archive, name, *args, **options):
-        if archive.getinfo(name).file_size > budget:
+    def guarded_read(archive: zipfile.ZipFile, name: str | zipfile.ZipInfo, *args: Any, **options: Any) -> bytes:
+        if archive.getinfo(cast(str, name)).file_size > budget:
             pytest.fail("oversized metadata decompressed before bounded inspection")
         return original_read(archive, name, *args, **options)
 
@@ -505,12 +532,12 @@ def test_source_generator_is_read_only_after_bounded_metadata_inspection(
 
 
 def test_build_deadline_settles_backend_descendants_before_staging_cleanup(
-    tmp_path, toolchain, monkeypatch,
-):
+    tmp_path: Path, toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import build_python_artifacts as builder
     from test_installer_wheel_acquisition import _running
 
-    payload = source_project(tmp_path / "source")
+    payload = cast("_LegacySourceProject", source_project)(tmp_path / "source")
     pid_file, late_write = tmp_path / "descendant.pid", tmp_path / "late-write"
     child = (
         "import os,pathlib,time;"
@@ -529,7 +556,7 @@ def test_build_deadline_settles_backend_descendants_before_staging_cleanup(
     staged = []
 
     @contextmanager
-    def observed_temporary(*args, **options):
+    def observed_temporary(*args: Any, **options: Any) -> Iterator[str]:
         with temporary(*args, **options) as path:
             staged.append(Path(path))
             try:
@@ -542,7 +569,7 @@ def test_build_deadline_settles_backend_descendants_before_staging_cleanup(
     with pytest.raises(subprocess.TimeoutExpired):
         builder.build_wheel(
             payload, tmp_path / "built", toolchain=toolchain,
-            uv=shutil.which("uv"), deadline=time.monotonic() + 15,
+            uv=cast(str, shutil.which("uv")), deadline=time.monotonic() + 15,
         )
     assert pid_file.is_file(), "the real backend must spawn its delayed writer"
     assert not _running(int(pid_file.read_text()))
@@ -551,12 +578,12 @@ def test_build_deadline_settles_backend_descendants_before_staging_cleanup(
 
 
 def test_source_mutation_during_build_cannot_relabel_wheels(
-    adopter, source, target, toolchain, monkeypatch, built_wheels,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path],
+) -> None:
     candidate = selected_source(source, target, adopter)
     original = completion.build_wheel
 
-    def mutate(*args, **kwargs):
+    def mutate(*args: Path, **kwargs: Any) -> Path:
         result = original(*args, **kwargs)
         (source[0] / "module.py").write_text("changed")
         return result
@@ -569,8 +596,8 @@ def test_source_mutation_during_build_cannot_relabel_wheels(
 
 @pytest.mark.parametrize("record_algorithm", ["sha256", "sha384", "sha512"])
 def test_complete_source_profile_includes_exact_pinned_third_party_and_transitive_extra(
-    adopter, source, target, toolchain, tmp_path, built_wheels, record_algorithm,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, tmp_path: Path, built_wheels: Callable[..., Path], record_algorithm: str,
+) -> None:
     from promotion_unit_tests.test_runtime_profile_wheels import _encoded
     manifest = source[0] / "libs" / "helper" / "pyproject.toml"
     manifest.write_text(manifest.read_text().replace('metrics=[]', 'metrics=["fixture-registry>=1"]'))
@@ -598,13 +625,13 @@ def test_complete_source_profile_includes_exact_pinned_third_party_and_transitiv
 
 @pytest.mark.parametrize("record_algorithm", ["sha384", "sha512"])
 def test_built_first_party_wheels_keep_sha256_record_policy(
-    adopter, source, target, toolchain, monkeypatch, built_wheels, record_algorithm,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch, built_wheels: Callable[..., Path], record_algorithm: str,
+) -> None:
     from promotion_unit_tests.test_runtime_profile_wheels import _encoded
 
     candidate = selected_source(source, target, adopter)
 
-    def altered(project, output, **options):
+    def altered(project: Path, output: Path, **options: Any) -> Path:
         path = built_wheels(project, output, **options)
         with zipfile.ZipFile(path) as archive:
             prefix = path.name.split("-py3-")[0] + ".dist-info/"
@@ -623,14 +650,14 @@ def test_built_first_party_wheels_keep_sha256_record_policy(
 
 
 def test_installed_target_mismatch_refuses_before_completion_marker(
-    adopter, source, target, toolchain, monkeypatch,
-):
+    adopter: _Adopter, source: tuple[Path, SourceIdentity], target: dict[str, Any], toolchain: ToolchainLock, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     candidate = selected_source(source, target, adopter)
     root = Path(candidate.record()["policy"]["owner"]["runtimeRoot"])
     version = candidate.record()["source"]["runtime_version"]
     probes = []
 
-    def environment(python, **_options):
+    def environment(python: Path, **_options: object) -> dict[str, str]:
         probes.append(python)
         return dict(target["environment"]) if len(probes) == 1 else {}
 
@@ -647,7 +674,7 @@ def test_installed_target_mismatch_refuses_before_completion_marker(
     assert completion.runtime.current_version(root) is None
 
 
-def test_real_marker_probe_cannot_run_installed_startup_hooks(tmp_path):
+def test_real_marker_probe_cannot_run_installed_startup_hooks(tmp_path: Path) -> None:
     root = tmp_path / "venv"
     venv.EnvBuilder(with_pip=False).create(root)
     python = root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -660,7 +687,7 @@ def test_real_marker_probe_cannot_run_installed_startup_hooks(tmp_path):
     )
     control = subprocess.run(
         [str(python), "-I", "-c", "pass"], capture_output=True, text=True, timeout=15,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     assert control.returncode == 0, control.stderr
     assert marker.is_file(), "the control must prove site initialization executes this hook"
@@ -669,7 +696,7 @@ def test_real_marker_probe_cannot_run_installed_startup_hooks(tmp_path):
     assert not marker.exists()
 
 
-def test_clean_source_profile_import_never_loads_native_governance():
+def test_clean_source_profile_import_never_loads_native_governance() -> None:
     script = """
 import sys
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
@@ -688,7 +715,7 @@ print("source-profile-clean-import-ok")
         [sys.executable, "-I", "-S", "-B", "-c", script, str(Path(__file__).resolve().parent),
          sysconfig.get_paths()["purelib"]],
         capture_output=True, text=True, timeout=30,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "source-profile-clean-import-ok"

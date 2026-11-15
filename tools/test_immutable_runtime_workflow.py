@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import CodeType
+from typing import Any, Mapping
+
 from collections import Counter
 from pathlib import Path
 import os
@@ -14,7 +17,8 @@ import sys
 
 import pytest
 import yaml
-from _pytest.mark import Expression, KeywordMatcher
+from _pytest.mark import KeywordMatcher
+from _pytest.mark.expression import Expression
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,14 +33,14 @@ BASH = STEPS["Select the supported native installation-management Bash"]
 EXECUTION = STEPS["Qualify isolated native development lifecycle"]
 
 
-def _python_body(step):
+def _python_body(step: dict[str, Any]) -> CodeType:
     prefix, suffix = "python - <<'PY'\n", "\nPY\n"
     command = step["run"]
     assert command.startswith(prefix) and command.endswith(suffix)
     return compile(command[len(prefix):-len(suffix)], "<runtime-workflow-step>", "exec")
 
 
-def _enabled(expression, inputs):
+def _enabled(expression: str, inputs: Mapping[str, object]) -> bool:
     assert expression.startswith("${{ ") and expression.endswith(" }}")
     for clause in expression[4:-3].split(" && "):
         if clause == "github.event_name == 'workflow_dispatch'":
@@ -52,7 +56,7 @@ def _enabled(expression, inputs):
     return True
 
 
-def test_manual_selection_preserves_every_existing_route_and_default():
+def test_manual_selection_preserves_every_existing_route_and_default() -> None:
     trigger = WORKFLOW.get("on", WORKFLOW.get(True))
     assert set(trigger) == {"workflow_dispatch"}
     inputs = trigger["workflow_dispatch"]["inputs"]
@@ -120,7 +124,7 @@ def test_manual_selection_preserves_every_existing_route_and_default():
     }
     assert set(defaults) == set(routes) and not any(defaults.values())
 
-    def selected(values):
+    def selected(values: dict[str, object]) -> set[str]:
         return {
             name for name, job in WORKFLOW["jobs"].items()
             if _enabled(job["if"], values)
@@ -138,11 +142,11 @@ def test_manual_selection_preserves_every_existing_route_and_default():
     assert set(WORKFLOW["jobs"]) == diagnostics | set().union(*routes.values())
 
 
-def _collected_packet_items(monkeypatch, files, expression=None):
-    items = []
+def _collected_packet_items(monkeypatch: pytest.MonkeyPatch, files: list[str], expression: str | None=None) -> list[pytest.Item]:
+    items: list[pytest.Item] = []
 
     class Inventory:
-        def pytest_collection_finish(self, session):
+        def pytest_collection_finish(self, session: pytest.Session) -> None:
             items.extend(session.items)
 
     arguments = [
@@ -157,7 +161,7 @@ def _collected_packet_items(monkeypatch, files, expression=None):
     return items
 
 
-def test_seed_packets_cover_actual_cases_once_without_wider_deadlines(monkeypatch):
+def test_seed_packets_cover_actual_cases_once_without_wider_deadlines(monkeypatch: pytest.MonkeyPatch) -> None:
     linux = WORKFLOW["jobs"]["packaging-seed-linux"]
     windows = WORKFLOW["jobs"]["packaging-seed-windows"]
     assert linux["strategy"] == windows["strategy"]
@@ -181,7 +185,7 @@ def test_seed_packets_cover_actual_cases_once_without_wider_deadlines(monkeypatc
     assert "pytest-timeout>=2.3,<3" in tooling["run"]
 
 
-def test_compile_packets_preserve_the_previous_actual_selection(monkeypatch):
+def test_compile_packets_preserve_the_previous_actual_selection(monkeypatch: pytest.MonkeyPatch) -> None:
     linux = WORKFLOW["jobs"]["dependency-compile-linux"]
     windows = WORKFLOW["jobs"]["dependency-compile-windows"]
     assert linux["strategy"] == windows["strategy"]
@@ -209,7 +213,7 @@ def test_compile_packets_preserve_the_previous_actual_selection(monkeypatch):
 
 
 @pytest.mark.parametrize("job_name", ["dependency-compile-linux", "packaging-seed-linux"])
-def test_actual_native_packet_step_uses_containment_and_reports_cleanup(monkeypatch, job_name):
+def test_actual_native_packet_step_uses_containment_and_reports_cleanup(monkeypatch: pytest.MonkeyPatch, job_name: str) -> None:
     import plugin_test_containment as containment
 
     job = WORKFLOW["jobs"][job_name]
@@ -217,7 +221,7 @@ def test_actual_native_packet_step_uses_containment_and_reports_cleanup(monkeypa
     step = next(step for step in job["steps"] if step.get("shell") == "python")
     calls = []
 
-    def run(command, **options):
+    def run(command: list[str], **options: Any) -> int:
         assert options["cwd"] == ROOT
         assert options["env"]["HOME"] != os.environ.get("HOME")
         assert command[command.index("--basetemp") + 1] == str(options["sandbox"] / "pytest")
@@ -245,8 +249,8 @@ def test_actual_native_packet_step_uses_containment_and_reports_cleanup(monkeypa
 
 @pytest.mark.parametrize("requested", ["", "A" * 40, "0123456789abcdef" * 2 + "01234567"])
 def test_actual_validator_accepts_only_exact_sha_or_dispatch_default(
-    tmp_path, monkeypatch, requested,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: str,
+) -> None:
     output = tmp_path / "outputs"
     monkeypatch.setenv("IMMUTABLE_RUNTIME_REF", requested)
     monkeypatch.setenv("DISPATCH_SHA", "b" * 40)
@@ -262,8 +266,8 @@ def test_actual_validator_accepts_only_exact_sha_or_dispatch_default(
     "$(touch unexpected)",
 ])
 def test_actual_validator_refuses_input_before_publishing_output(
-    tmp_path, monkeypatch, requested,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: str,
+) -> None:
     output = tmp_path / "outputs"
     monkeypatch.setenv("IMMUTABLE_RUNTIME_REF", requested)
     monkeypatch.setenv("DISPATCH_SHA", "b" * 40)
@@ -273,7 +277,7 @@ def test_actual_validator_refuses_input_before_publishing_output(
     assert not output.exists()
 
 
-def test_actual_validator_also_checks_the_dispatch_sha(tmp_path, monkeypatch):
+def test_actual_validator_also_checks_the_dispatch_sha(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     output = tmp_path / "outputs"
     monkeypatch.setenv("IMMUTABLE_RUNTIME_REF", "")
     monkeypatch.setenv("DISPATCH_SHA", "dev")
@@ -284,12 +288,12 @@ def test_actual_validator_also_checks_the_dispatch_sha(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("matches", [True, False])
-def test_actual_identity_checks_checkout_before_recording_evidence(monkeypatch, capsys, matches):
+def test_actual_identity_checks_checkout_before_recording_evidence(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], matches: bool) -> None:
     expected = "a" * 40
     actual = expected if matches else "b" * 40
     calls = []
 
-    def git(argv, **kwargs):
+    def git(argv: list[str], **kwargs: Any) -> str:
         calls.append(argv)
         assert kwargs == {"text": True}
         if argv == ["git", "rev-parse", "HEAD"]:
@@ -314,10 +318,10 @@ def test_actual_identity_checks_checkout_before_recording_evidence(monkeypatch, 
 
 
 @pytest.mark.parametrize("fail_at", ["rev-parse", "show"])
-def test_actual_identity_propagates_git_failures(monkeypatch, fail_at):
+def test_actual_identity_propagates_git_failures(monkeypatch: pytest.MonkeyPatch, fail_at: str) -> None:
     monkeypatch.setenv("EXPECTED_SHA", "a" * 40)
 
-    def git(argv, **kwargs):
+    def git(argv: list[str], **kwargs: Any) -> str:
         if argv[1] == fail_at:
             raise subprocess.CalledProcessError(23, argv)
         return "a" * 40 + "\n"
@@ -332,7 +336,7 @@ def test_actual_identity_propagates_git_failures(monkeypatch, fail_at):
     ("immutable-runtime-linux", "ubuntu-latest"),
     ("immutable-runtime-macos", "macos-latest"),
 ])
-def test_exact_native_matrix_and_read_only_immutable_checkout(name, runner):
+def test_exact_native_matrix_and_read_only_immutable_checkout(name: str, runner: str) -> None:
     job = WORKFLOW["jobs"][name]
     assert job["steps"] == JOB["steps"]
     assert job["if"] == "${{ inputs.immutable_runtime }}"
@@ -366,7 +370,7 @@ def test_exact_native_matrix_and_read_only_immutable_checkout(name, runner):
 
 
 @pytest.mark.parametrize("name", ["immutable-runtime-linux", "immutable-runtime-macos"])
-def test_exact_runner_selection_budgets_and_failure_propagation(name):
+def test_exact_runner_selection_budgets_and_failure_propagation(name: str) -> None:
     job = WORKFLOW["jobs"][name]
     assert EXECUTION["env"] == {"RUNTIME_MODE": "${{ matrix.mode }}"}
     assert [shlex.split(line) for line in EXECUTION["run"].splitlines()] == [
@@ -403,8 +407,8 @@ def test_exact_runner_selection_budgets_and_failure_propagation(name):
     ("macOS", False, True),
 ])
 def test_actual_bash_prerequisite_installs_only_missing_disposable_macos(
-    tmp_path, native_os, installed, install_fails,
-):
+    tmp_path: Path, native_os: str, installed: bool, install_fails: bool,
+) -> None:
     bash = shutil.which("bash")
     if os.name == "nt":
         git = shutil.which("git")
@@ -412,7 +416,7 @@ def test_actual_bash_prerequisite_installs_only_missing_disposable_macos(
         bash = str(Path(git).resolve().parent.parent / "bin" / "bash.exe")
     assert bash
 
-    def shell_path(path):
+    def shell_path(path: str | Path) -> str:
         value = str(path).replace("\\", "/")
         return "/" + value[0].lower() + value[2:] if os.name == "nt" else value
 
@@ -457,7 +461,7 @@ fi
     result = subprocess.run(
         [bash, "-e", "-c", BASH["run"]], env=environment,
         capture_output=True, text=True, timeout=45,
-        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        **({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW")} if os.name == "nt" else {}),
     )
     expected = ["--prefix bash"] if native_os == "macOS" else []
     if native_os == "macOS" and not installed:

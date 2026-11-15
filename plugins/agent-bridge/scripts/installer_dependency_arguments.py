@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from pathlib import Path
 
 
-def captured_environment(env, *, windows, error_type):
-    result = {}
+def captured_environment(
+    env: Mapping[str, str], *, windows: bool, error_type: type[Exception],
+) -> dict[str, str]:
+    result: dict[str, str] = {}
     for key, value in env.items():
         key = key.upper() if windows else key
         if key in result and result[key] != value:
@@ -16,7 +19,9 @@ def captured_environment(env, *, windows, error_type):
     return result
 
 
-def argument_pairs(arguments, value_options, *, error_type):
+def argument_pairs(
+    arguments: Iterable[str], value_options: Collection[str], *, error_type: type[Exception],
+) -> Iterator[tuple[str, str]]:
     iterator = iter(arguments)
     positional = False
     for argument in iterator:
@@ -42,7 +47,9 @@ def argument_pairs(arguments, value_options, *, error_type):
                 yield option, value
 
 
-def balanced(text, start, opening, closing, *, error_type):
+def balanced(
+    text: str, start: int, opening: str, closing: str, *, error_type: type[Exception],
+) -> tuple[str, int]:
     depth = 0
     quoted = escaped = False
     for offset in range(start, len(text)):
@@ -66,16 +73,16 @@ def balanced(text, start, opening, closing, *, error_type):
 
 
 def uv_command(
-    uv,
-    arguments,
+    uv: str,
+    arguments: list[str],
     *,
-    cwd,
-    directory,
-    operation,
-    windows,
-    argument_pairs,
-    value_options,
-):
+    cwd: Path | None,
+    directory: Path,
+    operation: str,
+    windows: bool,
+    argument_pairs: Callable[[list[str]], Iterable[tuple[str, str]]],
+    value_options: Collection[str],
+) -> tuple[list[str], Path | None]:
     if not windows or len(os.path.abspath(cwd or Path.cwd())) < 260:
         return [uv, "pip", operation, *arguments], cwd
     retained = []
