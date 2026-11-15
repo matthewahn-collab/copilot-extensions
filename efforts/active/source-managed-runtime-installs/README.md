@@ -841,7 +841,7 @@ owners, holds and rollout boundaries remain unchanged; technical acceptance
 stays open.
 
 - [2026-11-15 - Fast construction and bounded service cutoff reviewed](fast-construction-and-outgoing-cutoff.md#journal)
-- [2026-11-15 - Bounded Manager/Worktrees consumer qualification accepted](manager-worktrees-native-consumer.md#journal)
+- [2026-11-15 - Manager/Worktrees qualification accepted; selected-slot fixture prerequisite merged](manager-worktrees-native-consumer.md#journal)
 - [2026-11-13 - Foreground update and service-start lifetime clarification](journal/2026/11.13%20foreground-update-service-startup.md)
 
 - [2026-11-13 - Original canonical application integration merged](journal/2026/11.13%20canonical-application-integration.md)

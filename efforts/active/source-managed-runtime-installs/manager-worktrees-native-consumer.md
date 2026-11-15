@@ -289,7 +289,46 @@ Both JSON and JSONL key/collision controls pass within the full 418-test
 packet/client/lifetime selection, with whole-file strict Linux/Windows typing
 and touched-file lint green. Native execution remains held.
 
+### 2026-11-15 - Authentic-source caller fixture implementation
+
+The existing suite runner now has an explicit `source` case, separately selected
+by the hosted job's `manager-worktrees-source` portfolio. It freezes real Main
+and merged-Dev Git objects, retains independent history and invokes the existing
+complete-application producer for the two-app closure. Fresh Main installation
+uses the native Manager and Worktrees source receivers; the subsequent generated
+installed Manager frontdoor owns the ordinary update and source packet.
+No synthetic artifact version or commit is used for those runtime inputs.
+The original whole-suite modes and stage budgets remain unchanged.
+
+The fixture records the producer's declarations before native installation,
+then compares installed source/profile declarations, physical environment
+origins and existing native resolver-frontdoor proofs. Fixture data and source
+refs must remain unchanged, and the outer owner always settles after failure or
+timeout. This is implementation, not a hosted qualification receipt: Q2 remains
+open pending actual consumer evidence, and Q3-Q5/VQ1-VQ6 retain their separate
+staging-barrier, cutoff, removal, lifetime, review and release requirements.
+No productive installation or other contributor's consumer was changed.
+
+Contained validation passes 11 focused source/compatibility controls and 216
+runner/workflow tests. Whole-file strict typing passes the existing Python 3.10
+Linux and Windows targets for all six changed Python files; lint, documentation
+structure and the 13-plugin install contract pass. Broader fixture validation
+found an Index-default regression, corrected by preserving the whole-suite
+helper's default and opting out only in this source case. Workflow tests also
+found three existing bounded jobs missing from an exact inventory assertion;
+the expectation was repaired without weakening equality or dropping coverage.
+These results are unit and lightweight real-Git/constructor-admission evidence,
+not clean-OS, native service, ordinary-update or release acceptance.
+
 ### 2026-11-15 - Physical application environment prerequisite
+
+#12693 merged as `14fa6069e6da8f2414491630b545a52d39db6d31` after
+current-head approval, resolution of the fallback-control finding and successful
+required CI. This earns only the selected-slot fixture prerequisite below;
+Q2-Q5, VQ1-VQ6 and the parent acceptance remain open. The next implementation
+is the positively selected authentic-source case through this same fixture
+and runner, using frozen Main/merged-Dev objects and the existing application
+owners rather than the whole-suite case's synthetic versioned artifacts.
 
 The fixture's `_python()` helper hardcoded a legacy direct-slot interpreter,
 so it could not launch an actual complete application in its nested `.venv`.

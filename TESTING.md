@@ -10200,7 +10200,35 @@ python tools/run-manager-suite-acceptance.py --root .v --mode normal
 python tools/run-manager-suite-acceptance.py --root .v --mode repair
 ```
 
-These commands refuse local execution before creating fixtures. Each case
+The same runner has a separate, explicitly selected authentic-source case:
+`portfolio=manager-worktrees-source`, with `source_sha` set to a full commit
+already merged into Dev. The job freezes the fetched Main commit and verifies
+Dev ancestry before fixture construction. It copies those real Git objects into
+an independent fixture repository; it does not synthesize versions or commits.
+Its direct, disposable-hosted-Windows-only invocation is:
+
+```text
+python tools/run-manager-suite-acceptance.py --root .v --mode source --main-commit <full-main-commit> --dev-commit <full-merged-dev-commit>
+```
+
+Only Manager, Worktrees and their producer-owned application/wheel closure
+participate. The canonical application producer prepares both frozen inputs
+before installation. After the fresh Main installation, the generated installed
+Manager command performs an ordinary `update --project example`, with both
+independent source policies selecting the frozen Dev repository. The fixture
+does not inject a source packet or mock the producer. Evidence compares the
+actual installed application declarations and source identities, physical
+environments, native command-routing proofs and retained fixture data.
+The original 1,800/900/300/90-second preparation/exercise/assertion/settlement
+allocations and process observer remain unchanged; settlement inventories
+remaining fixture-owned tasks and runtime processes. This case does not launch
+New/Resume actors or installation-survival tests, qualify the whole suite, or
+establish production adoption. Staging-failure, cutoff and removal acceptance
+remain separate requirements; neither contained controls nor a source merge
+substitute for a successful hosted result.
+
+The normal and repair commands refuse local execution before creating fixtures.
+Each of those whole-suite cases
 constructs V1 and V2 through canonical materialization, starts the applicable
 V1 portfolio, and calls the real installed Manager for normal updates or its
 native bootstrap repair entrypoint for repair, against the same default HOME

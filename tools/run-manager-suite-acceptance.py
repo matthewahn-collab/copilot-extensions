@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import importlib
 import json
 import os
 from pathlib import Path
@@ -13,9 +15,9 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Any
 
-from plugin_test_containment import no_window_kwargs
-from agent_procutil import contained_test_mode
+from agent_procutil import contained_test_mode, no_window_kwargs
 from agent_procutil.owned_process import run_installation_owned
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,12 +35,17 @@ def _run(argv: list[str], *, timeout: float) -> int:
 
 
 @contextmanager
-def _observe_processes(root: Path, mode: str, script):
+def _observe_processes(
+    root: Path, mode: str, script: Callable[[Path, Path, Path, Path], str],
+) -> Iterator[None]:
     ready = root / f"{mode}-process-trace.ready"
     stop = root / f"{mode}-process-trace.stop"
     report = root / f"{mode}-process-trace.json"
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        raise RuntimeError("Native process observation requires pwsh")
     command = [
-        shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
+        pwsh, "-NoProfile", "-NonInteractive", "-Command",
         script(root / mode / "h", ready, stop, report),
     ]
     with ThreadPoolExecutor(max_workers=1) as observer:
@@ -61,15 +68,24 @@ def _observe_processes(root: Path, mode: str, script):
                 raise RuntimeError("Native process observer did not retain its report")
 
 
-def qualify(root: Path, mode: str, python: Path) -> int:
+def qualify(
+    root: Path, mode: str, python: Path, *, main_commit: str | None = None,
+    dev_commit: str | None = None,
+) -> int:
     """Keep cleanup independent of success, assertion failure and stage timeout."""
-    report: dict = {"mode": mode, "stages": {}, "errors": []}
+    report: dict[str, Any] = {"mode": mode, "stages": {}, "errors": []}
     previous_data = os.environ.get("MANAGER_SUITE_ACCEPTANCE_DATA")
+    fixture = FIXTURE.with_name("test_manager_source_replacement.py") if mode == "source" else FIXTURE
     try:
         for stage in ("prepare", "exercise"):
             print(f"Manager suite {mode}: {stage}", flush=True)
+            source = (
+                ["--main-commit", str(main_commit), "--dev-commit", str(dev_commit)]
+                if mode == "source" and stage == "prepare" else []
+            )
             code = _run(
-                [str(python), "-I", "-X", "utf8", "-B", str(FIXTURE), "--" + stage, str(root), "--mode", mode],
+                [str(python), "-I", "-X", "utf8", "-B", str(fixture), "--" + stage, str(root),
+                 "--mode", mode, *source],
                 timeout=1800 if stage == "prepare" else 900,
             )
             report["stages"][stage] = code
@@ -79,7 +95,8 @@ def qualify(root: Path, mode: str, python: Path) -> int:
             os.environ["MANAGER_SUITE_ACCEPTANCE_DATA"] = str(root)
             report["stages"]["assertions"] = _run([
                 sys.executable, str(REPO / "tools" / "run-plugin-tests.py"), "worktree-manager",
-                "--test-file", "tests/native/test_manager_suite_replacement.py", "-k", mode,
+                "--test-file", "tests/native/" + fixture.name, "-k",
+                "test_installed_manager_updates_frozen_source" if mode == "source" else mode,
             ], timeout=300)
     except Exception as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
@@ -90,7 +107,7 @@ def qualify(root: Path, mode: str, python: Path) -> int:
             os.environ["MANAGER_SUITE_ACCEPTANCE_DATA"] = previous_data
         try:
             report["stages"]["settle"] = _run([
-                str(python), "-I", "-X", "utf8", "-B", str(FIXTURE), "--settle", str(root), "--mode", mode,
+                str(python), "-I", "-X", "utf8", "-B", str(fixture), "--settle", str(root), "--mode", mode,
             ], timeout=90)
         except Exception as error:
             report["errors"].append(f"settlement: {type(error).__name__}: {error}")
@@ -106,8 +123,15 @@ def qualify(root: Path, mode: str, python: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--mode", choices=("normal", "repair"), required=True)
+    parser.add_argument("--mode", choices=("normal", "repair", "source"), required=True)
+    parser.add_argument("--main-commit")
+    parser.add_argument("--dev-commit")
     args = parser.parse_args()
+    if args.mode == "source":
+        if not args.main_commit or not args.dev_commit:
+            parser.error("source mode requires --main-commit and --dev-commit")
+    elif args.main_commit is not None or args.dev_commit is not None:
+        parser.error("source commit inputs require source mode")
     fixture = runpy.run_path(str(FIXTURE.with_name("manager_suite_fixture.py")))
     fixture["require_venue"]()
     if contained_test_mode():
@@ -121,12 +145,11 @@ def main() -> int:
     )
     if prepared.returncode:
         return prepared.returncode
-    from plugin_test_resources import venv_root
-
+    venv_root: Callable[[Path], Path] = importlib.import_module("plugin_test_resources").venv_root
     python = venv_root(REPO) / "worktree-manager" / "Scripts" / "python.exe"
     root.mkdir(parents=True, exist_ok=True)
     with _observe_processes(root, args.mode, fixture["_runtime_process_trace_script"]):
-        return qualify(root, args.mode, python)
+        return qualify(root, args.mode, python, main_commit=args.main_commit, dev_commit=args.dev_commit)
 
 
 if __name__ == "__main__":

@@ -11,11 +11,19 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any, NoReturn, Protocol
 
 import pytest
-import yaml
+
+yaml = importlib.import_module("yaml")
+
+
+class _Limits(Protocol):
+    @property
+    def wall_seconds(self) -> float: ...
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location(
@@ -28,8 +36,9 @@ SPEC.loader.exec_module(MODULE)
 
 @pytest.mark.parametrize("outcome", ["passed", "failed", "skipped", "missing", "source-mismatch"])
 def test_runtime_only_portfolio_refuses_incomplete_native_evidence(
-    tmp_path, monkeypatch, capsys, outcome,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    outcome: str,
+) -> None:
     import xml.etree.ElementTree as ET
 
     workflow = yaml.safe_load(
@@ -51,9 +60,12 @@ def test_runtime_only_portfolio_refuses_incomplete_native_evidence(
             "test_real_cold_driver_and_native_reentry_use_the_same_owner[" + case + "]"
             for case in ("False-False", "False-True", "True-False")
         )
-    calls = []
+    calls: list[list[str]] = []
 
-    def run(arguments, *, timeout, max_stdout_bytes, max_stderr_bytes, env=None):
+    def run(
+        arguments: list[str], *, timeout: float, max_stdout_bytes: int,
+        max_stderr_bytes: int, env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(arguments)
         if arguments[0] == "git":
             return subprocess.CompletedProcess(arguments, 0, "a" * 40 + "\n", "")
@@ -72,7 +84,7 @@ def test_runtime_only_portfolio_refuses_incomplete_native_evidence(
 
     package = ModuleType("agent_procutil")
     process = ModuleType("agent_procutil.owned_process")
-    process.run_caller_owned = run
+    setattr(process, "run_caller_owned", run)
     monkeypatch.setitem(sys.modules, package.__name__, package)
     monkeypatch.setitem(sys.modules, process.__name__, process)
     monkeypatch.chdir(tmp_path)
@@ -96,7 +108,7 @@ def test_runtime_only_portfolio_refuses_incomplete_native_evidence(
         assert "runner diagnostic" in captured.err
 
 
-def test_bridge_historical_guards_preserve_selection_and_failure_diagnostics():
+def test_bridge_historical_guards_preserve_selection_and_failure_diagnostics() -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
     )
@@ -145,8 +157,9 @@ def test_bridge_historical_guards_preserve_selection_and_failure_diagnostics():
 @pytest.mark.parametrize("outcome", ["passed", "failed", "skipped", "missing", "empty", "duplicate"])
 @pytest.mark.parametrize("step_id", ["readers", "incoming"])
 def test_registration_inspection_portfolio_requires_complete_native_evidence(
-    tmp_path, monkeypatch, capsys, outcome, step_id,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    outcome: str, step_id: str,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
     )
@@ -226,7 +239,9 @@ ET.ElementTree(root).write(reports / "synthetic-admission-control.xml")
 
 
 @pytest.mark.parametrize("expected", ["", "b" * 40, "a" * 40])
-def test_registration_inspection_source_pin_precedes_execution(monkeypatch, expected):
+def test_registration_inspection_source_pin_precedes_execution(
+    monkeypatch: pytest.MonkeyPatch, expected: str,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
     )
@@ -248,8 +263,8 @@ def test_registration_inspection_source_pin_precedes_execution(monkeypatch, expe
 @pytest.mark.parametrize("outcome", ["passed", "failed", "skipped"])
 @pytest.mark.parametrize("step_id", ["readers", "consumers"])
 def test_related_knowledge_portfolio_requires_native_reader_execution(
-    tmp_path, monkeypatch, outcome, step_id,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, step_id: str,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
     )
@@ -287,8 +302,8 @@ ET.ElementTree(root).write(reports / "native.xml")
     if outcome == "passed" or (outcome == "skipped" and step_id == "consumers"):
         exec(body, {})
     else:
-        expected = subprocess.CalledProcessError if outcome == "failed" else AssertionError
-        with pytest.raises(expected):
+        expected_error = subprocess.CalledProcessError if outcome == "failed" else AssertionError
+        with pytest.raises(expected_error):
             exec(body, {})
     arguments = json.loads((tmp_path / "arguments.json").read_text())
     assert arguments[0] == "agent-worktrees"
@@ -308,7 +323,7 @@ ET.ElementTree(root).write(reports / "native.xml")
 
 
 @pytest.mark.parametrize("platform", ["linux", "windows"])
-def test_gateway_native_groups_preserve_the_complete_disjoint_selection(platform):
+def test_gateway_native_groups_preserve_the_complete_disjoint_selection(platform: str) -> None:
     from _pytest.mark.expression import Expression
 
     root = HERE.parent
@@ -367,11 +382,15 @@ def test_gateway_native_groups_preserve_the_complete_disjoint_selection(platform
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
     }
 
-    def selected(expression):
-        return {
-            node for node in nodes
-            if expression.evaluate(lambda keyword: keyword.casefold() in node.casefold())
-        }
+    def selected(expression: Expression) -> set[str]:
+        selected_nodes: set[str] = set()
+        for node in nodes:
+            def matches(name: str, /, **_kwargs: str | int | bool | None) -> bool:
+                return name.casefold() in node.casefold()
+
+            if expression.evaluate(matches):
+                selected_nodes.add(node)
+        return selected_nodes
 
     groups = [selected(expression) for expression in expressions]
     assert groups[0] == {
@@ -453,8 +472,10 @@ def test_unrelated_changes_do_not_expand_ci(paths: list[str]) -> None:
     assert not MODULE.needs_installation_context_smoke(paths)
 
 
-def test_dispatch_selects_smoke_without_git(monkeypatch, capsys) -> None:
-    def unexpected_git(*args, **kwargs):
+def test_dispatch_selects_smoke_without_git(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    def unexpected_git(*args: Any, **kwargs: Any) -> NoReturn:
         raise AssertionError("manual dispatch must not need diff metadata")
 
     monkeypatch.setattr(MODULE.subprocess, "run", unexpected_git)
@@ -462,7 +483,9 @@ def test_dispatch_selects_smoke_without_git(monkeypatch, capsys) -> None:
     assert capsys.readouterr().out == "true\n"
 
 
-def test_missing_base_selects_smoke_visibly(monkeypatch, capsys) -> None:
+def test_missing_base_selects_smoke_visibly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(
         MODULE.subprocess, "run",
         lambda *args, **kwargs: subprocess.CompletedProcess([], 128, "", "unknown revision\n"),
@@ -473,7 +496,9 @@ def test_missing_base_selects_smoke_visibly(monkeypatch, capsys) -> None:
     assert "base revision unavailable" in output.err
 
 
-def test_diff_error_is_not_reported_as_unrelated(monkeypatch, capsys) -> None:
+def test_diff_error_is_not_reported_as_unrelated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     results = iter(
         [
             subprocess.CompletedProcess([], 0, "base\n", ""),
@@ -542,7 +567,9 @@ def test_native_launch_acceptance_is_explicit_and_source_pinned() -> None:
     ("native-seed-reply-linux", "ubuntu-latest"),
     ("native-seed-reply-macos", "macos-latest"),
 ])
-def test_native_seed_reader_acceptance_uses_stock_posix_shells_only_when_selected(name, runner) -> None:
+def test_native_seed_reader_acceptance_uses_stock_posix_shells_only_when_selected(
+    name: str, runner: str,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -664,7 +691,7 @@ def test_displaced_native_sources_and_unavailable_portfolio_remain_explicit() ->
     ("update-diagnostics-linux", "ubuntu-latest"),
     ("update-diagnostics-windows", "windows-latest"),
 ])
-def test_update_diagnostics_native_packet_preserves_bounds_and_source(name, route):
+def test_update_diagnostics_native_packet_preserves_bounds_and_source(name: str, route: str) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -716,7 +743,7 @@ def test_update_diagnostics_native_packet_preserves_bounds_and_source(name, rout
         "agent-procutil": {"tests/test_retirement_custody.py"},
         "payload-invocation": {"tests/test_command_lifecycle.py", "tests/test_generate.py"},
     }
-    selected = {target: set() for target in required}
+    selected: dict[str, set[str]] = {target: set() for target in required}
     for step in families:
         command = step["run"]
         arguments = shlex.split(command)
@@ -756,8 +783,8 @@ def test_update_diagnostics_native_packet_preserves_bounds_and_source(name, rout
 
 @pytest.mark.parametrize("matches", [False, True])
 def test_update_diagnostics_checks_actual_checkout_before_reporting_source(
-    monkeypatch, capsys, matches,
-):
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], matches: bool,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -784,7 +811,7 @@ def test_update_diagnostics_checks_actual_checkout_before_reporting_source(
 
 @pytest.mark.parametrize("fail_on", ["tools/seasoned_uv.py", "-m"])
 def test_windows_step_does_not_mask_native_admission_failure(
-    tmp_path, fail_on,
+    tmp_path: Path, fail_on: str,
 ) -> None:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if not shell:
@@ -818,7 +845,7 @@ function python {
             "FIXTURE_COMMAND_LOG": str(log), "FIXTURE_FAIL_ON": fail_on,
         },
         capture_output=True, text=True, timeout=20,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     assert result.returncode == 23, result.stdout + result.stderr
     assert log.read_text().splitlines() == (
@@ -840,7 +867,9 @@ def test_derived_native_diagnostics_are_not_a_required_smoke_fallback() -> None:
 @pytest.mark.parametrize("platform,runner", [
     ("linux", "ubuntu-latest"), ("windows", "windows-latest"),
 ])
-def test_candidate_profiles_remain_focused_opt_in_native_acceptance(platform, runner) -> None:
+def test_candidate_profiles_remain_focused_opt_in_native_acceptance(
+    platform: str, runner: str,
+) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -1153,6 +1182,7 @@ def test_full_derived_native_acceptance_has_explicit_bounded_matrix() -> None:
         "pr-artifacts-linux", "pr-artifacts-windows",
         "gateway-role-tunnels", "gateway-host-application-linux", "gateway-host-application-windows",
         "gateway-continuity-application-linux", "gateway-continuity-application-windows",
+        "gateway-normal-setup-linux", "gateway-normal-setup-windows",
         "dependency-compile-linux", "dependency-compile-windows",
         "source-build-linux", "source-build-windows",
         "source-cache-linux", "source-cache-windows",
@@ -1183,6 +1213,7 @@ def test_full_derived_native_acceptance_has_explicit_bounded_matrix() -> None:
         "windows-broker-portable", "windows-broker-probe", "windows-broker-consumers",
         "windows-native-process",
         "native-daemon-exit-windows",
+        "wmi-durable-launch-windows",
         "uv-deployment-compatibility-linux", "uv-deployment-compatibility-windows",
     }
     for name, runner in routes.items():
@@ -1213,7 +1244,7 @@ def test_full_derived_native_acceptance_has_explicit_bounded_matrix() -> None:
             assert step["env"]["INSTALLATION_CONTEXT_POWERSHELL"] == "powershell"
 
 
-def test_chat_floor_matrix_keeps_python310_tests_with_python311_runner_bootstrap():
+def test_chat_floor_matrix_keeps_python310_tests_with_python311_runner_bootstrap() -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -1230,7 +1261,7 @@ def test_chat_floor_matrix_keeps_python310_tests_with_python311_runner_bootstrap
         assert acceptance["env"]["UV_PYTHON"] == "${{ steps.chat-python.outputs.python-path }}"
 
 
-def test_constructor_groups_and_mutations_move_to_existing_lanes_without_dropping_cache_scope():
+def test_constructor_groups_and_mutations_move_to_existing_lanes_without_dropping_cache_scope() -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
     )
@@ -1307,9 +1338,9 @@ def test_constructor_groups_and_mutations_move_to_existing_lanes_without_droppin
 @pytest.mark.parametrize("job_key", ["source-build-linux", "source-build-windows"])
 @pytest.mark.parametrize("failure_at", [None, 0, 1])
 def test_manager_native_step_retains_owned_cleanup_and_child_failure(
-    tmp_path, monkeypatch, job_key, failure_at,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, job_key: str, failure_at: int | None,
 ) -> None:
-    import plugin_test_containment as containment
+    containment = importlib.import_module("plugin_test_containment")
 
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
@@ -1320,9 +1351,11 @@ def test_manager_native_step_retains_owned_cleanup_and_child_failure(
         if step.get("name") == "Persisted Manager admission and fresh-process offline reuse"
     )
     assert step["shell"] == "python"
-    calls = []
+    calls: list[tuple[list[str], Path, _Limits]] = []
 
-    def run(command, *, cwd, env, sandbox, limits):
+    def run(
+        command: list[str], *, cwd: Path, env: dict[str, str], sandbox: Path, limits: _Limits,
+    ) -> int:
         assert cwd == tmp_path and sandbox.is_dir()
         assert Path(env["HOME"]).resolve().is_relative_to(sandbox.resolve())
         source_paths = [str(tmp_path / "tools")]
@@ -1360,8 +1393,10 @@ def test_manager_native_step_retains_owned_cleanup_and_child_failure(
     assert job["timeout-minutes"] == 6
 
 
-def test_manager_native_step_loads_first_party_helpers_without_site_packages(monkeypatch) -> None:
-    import plugin_test_containment as containment
+def test_manager_native_step_loads_first_party_helpers_without_site_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    containment = importlib.import_module("plugin_test_containment")
 
     repo = HERE.parent
     workflow = yaml.safe_load(
@@ -1371,8 +1406,8 @@ def test_manager_native_step_loads_first_party_helpers_without_site_packages(mon
         step for step in workflow["jobs"]["source-build-linux"]["steps"]
         if step.get("name") == "Persisted Manager admission and fresh-process offline reuse"
     )
-    original_run = containment.run_contained
-    calls = []
+    original_run: Callable[..., int] = containment.run_contained
+    calls: list[list[str]] = []
     script = """
 import pathlib, sys
 import agent_procutil
@@ -1399,7 +1434,7 @@ assert pathlib.Path(single_instance_lease.__file__).resolve() == (
 print("manager-source-helpers-without-site-packages-ok")
 """
 
-    def run(command, **kwargs):
+    def run(command: list[str], **kwargs: Any) -> int:
         calls.append(command)
         probe = script if len(calls) == 2 else "print('original-admission-path-retained')"
         return original_run(
@@ -1626,13 +1661,16 @@ def test_windows_cold_foundation_modules_have_independent_aggregate_budgets() ->
 @pytest.mark.parametrize("cleanup_overrun", [False, True])
 @pytest.mark.parametrize("stack_diagnostics", [False, True])
 def test_explicit_foundation_lifetime_retains_negative_controls_and_failure(
-    tmp_path, monkeypatch, capsys, selection, expected, cleanup_raises, cleanup_overrun, stack_diagnostics,
-):
-    from plugin_test_containment import UnreapedProcessError
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    selection: str, expected: str, cleanup_raises: bool, cleanup_overrun: bool,
+    stack_diagnostics: bool,
+) -> None:
+    containment = importlib.import_module("plugin_test_containment")
 
     spec = importlib.util.spec_from_file_location(
         "qualified_foundation_lifetime", HERE / "qualify_foundation_lifetime.py",
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     environment = tmp_path / "venvs"
@@ -1642,11 +1680,11 @@ def test_explicit_foundation_lifetime_retains_negative_controls_and_failure(
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     (sandbox / "fixture.log").write_text("exact fixture failure", encoding="utf-8")
-    observed = {}
+    observed: dict[str, Any] = {}
     clock = [0.0]
-    failure = UnreapedProcessError("unconfirmed fixture cleanup")
+    failure = containment.UnreapedProcessError("unconfirmed fixture cleanup")
 
-    def run(arguments, **options):
+    def run(arguments: list[str], **options: Any) -> int:
         assert observed.get("admitted") is True
         observed.update(arguments=arguments, **options)
         clock[0] = 899
@@ -1655,17 +1693,17 @@ def test_explicit_foundation_lifetime_retains_negative_controls_and_failure(
         return 0 if cleanup_overrun or stack_diagnostics else 17
 
     class Sandbox:
-        def __enter__(self):
+        def __enter__(self) -> str:
             return str(sandbox)
 
-        def __exit__(self, *_args):
+        def __exit__(self, *_args: Any) -> None:
             clock[0] += 2 if cleanup_overrun else .5
 
-    def admit(wait, root):
+    def admit(wait: float, root: Path) -> SimpleNamespace:
         assert wait == 0 and root == environment / "update-driver"
         observed["admitted"] = True
 
-        def release():
+        def release() -> None:
             assert clock[0] == (901 if cleanup_overrun else 899.5)
             observed["released"] = True
 
@@ -1709,10 +1747,13 @@ def test_explicit_foundation_lifetime_retains_negative_controls_and_failure(
     )
 
 
-def test_native_foundation_busy_environment_refuses_before_interpreter_inspection(tmp_path, monkeypatch, capsys):
+def test_native_foundation_busy_environment_refuses_before_interpreter_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     spec = importlib.util.spec_from_file_location(
         "qualified_foundation_busy", HERE / "qualify_foundation_lifetime.py",
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     environment = tmp_path / "venvs" / "update-driver"
@@ -1721,7 +1762,7 @@ def test_native_foundation_busy_environment_refuses_before_interpreter_inspectio
     class Busy(Exception):
         pass
 
-    def refuse(wait, root):
+    def refuse(wait: float, root: Path) -> NoReturn:
         assert wait == 0 and root == environment
         raise Busy
 
@@ -1737,10 +1778,13 @@ def test_native_foundation_busy_environment_refuses_before_interpreter_inspectio
     assert list(environment.iterdir()) == []
 
 
-def test_foundation_failure_log_capture_is_bounded_and_read_only(tmp_path, capsys):
+def test_foundation_failure_log_capture_is_bounded_and_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
     spec = importlib.util.spec_from_file_location(
         "qualified_foundation_diagnostics", HERE / "qualify_foundation_lifetime.py",
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     paths = []
@@ -1756,12 +1800,15 @@ def test_foundation_failure_log_capture_is_bounded_and_read_only(tmp_path, capsy
     assert all(path.stat().st_size == 17018 for path in paths)
 
 
-def test_foundation_failure_logs_survive_windows_console_encoding(tmp_path, monkeypatch):
+def test_foundation_failure_logs_survive_windows_console_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import io
 
     spec = importlib.util.spec_from_file_location(
         "qualified_foundation_encoding", HERE / "qualify_foundation_lifetime.py",
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     transcript = tmp_path / "native-installer.log"
@@ -1820,7 +1867,7 @@ def test_pull_requests_command_adoption_uses_explicit_native_portfolio() -> None
     ("windows", "windows-latest", "UPDATE_DRIVER_NATIVE_FOUNDATION_GENESIS"),
 ])
 def test_bridge_commands_partition_real_native_cases_without_relaxing_bounds(
-    platform, runner, opt_in,
+    platform: str, runner: str, opt_in: str,
 ) -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
@@ -1997,8 +2044,12 @@ def test_logger_snapshot_fixture_outer_budget_preserves_inner_deadlines() -> Non
     ]
     assert sorted(inner) == ["420", "_STAMP_TIMEOUT_SECONDS"]
     assert ast.unparse(outer) == "630 if os.name == 'nt' else 600"
+    assert isinstance(outer, ast.IfExp) and isinstance(stamp, ast.IfExp)
+    assert isinstance(outer.body, ast.Constant) and isinstance(stamp.body, ast.Constant)
+    assert isinstance(outer.orelse, ast.Constant) and isinstance(stamp.orelse, ast.Constant)
     for allowance, stamp_limit in ((outer.body.value, stamp.body.value),
                                    (outer.orelse.value, stamp.orelse.value)):
+        assert isinstance(stamp_limit, int)
         assert allowance == stamp_limit + 420 + 120
 
 
@@ -2572,10 +2623,11 @@ print(json.dumps(results))
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=HERE.parent, env=environment, capture_output=True, text=True, check=False,
-        timeout=20, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW") if os.name == "nt" else 0,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    return json.loads(result.stdout)
+    collections: dict[str, list[str]] = json.loads(result.stdout)
+    return collections
 
 
 @pytest.mark.parametrize("mode", ["mode_legacy", "mode_active"])
