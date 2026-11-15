@@ -423,6 +423,7 @@ jobs:
         run: >-
           python tools/run-plugin-tests.py agent-vault --max-files-per-sub-suite 2
           --test-file tests/test_configuration_layers.py
+          --test-file tests/test_default_owner.py
           --test-file tests/test_installer_readiness.py
           --test-file tests/test_bootstrap_driver.py
           --test-file tests/test_bootstrap_check_reconcile_always_on.py

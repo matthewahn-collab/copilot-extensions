@@ -99,6 +99,7 @@ def _checked_report(report, own):
 
 def owner_report(root: Path) -> dict | None:
     from .config import home_dir
+    from .default_owner import owns_root
 
     own_root = Path(os.environ.get("AGENT_RT_ROOT") or home_dir())
     raw = os.environ.get("COPILOT_EXTENSIONS_CONTEXT", "")
@@ -113,6 +114,8 @@ def owner_report(root: Path) -> dict | None:
             "agent-vault", own_root, raw,
         )
     report = delivered_context(repository_root=root)
+    if report is None and owns_root(root):
+        return None
     if report is not None:
         _checked_report(report, own)
         if own is not None:

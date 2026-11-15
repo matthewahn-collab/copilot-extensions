@@ -323,6 +323,7 @@ def test_native_invocation_contract_is_read_only(monkeypatch: pytest.MonkeyPatch
             "configuration-root-v1", "batch-get-v1", "ssh-key-install-pin-v1",
             "authenticated-curl-v1", "daemon-bind-default-v1", "preserved-cache-recovery-v1",
             "credential-read-require-running-v1",
+            "native-default-owner-v1",
         ],
     }
 

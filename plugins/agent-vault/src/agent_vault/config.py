@@ -21,8 +21,21 @@ def configuration_source(cwd: str | None = None) -> str | None:
     """Keep an absent extension hint unless a caller or resident selected one."""
     selected = invocation_configuration_root(cwd)
     if selected is not None:
+        if (
+            cwd is not None
+            and invocation_configuration_root() is None
+            and resident_configuration_source() is None
+        ):
+            from .default_owner import fallback_root
+
+            return fallback_root(cwd) or selected
         return selected
-    return resident_configuration_source()
+    selected = resident_configuration_source()
+    if selected is not None:
+        return selected
+    from .default_owner import fallback_root
+
+    return fallback_root()
 
 
 def configuration_root(cwd: str | None = None) -> str:

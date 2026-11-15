@@ -180,6 +180,7 @@ def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, en
         "configuration-root-v1", "batch-get-v1", "ssh-key-install-pin-v1",
         "authenticated-curl-v1", "daemon-bind-default-v1", "preserved-cache-recovery-v1",
         "credential-read-require-running-v1",
+        "native-default-owner-v1",
     ]
     assert not (runtime / "run").exists()
 
