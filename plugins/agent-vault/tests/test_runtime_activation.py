@@ -2,42 +2,44 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
-from types import ModuleType
-
 import base64
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+from types import ModuleType
+from typing import Any, Protocol, cast
 
 import pytest
 from agent_procutil import no_window_kwargs
 
-if TYPE_CHECKING:
-    import test_bootstrap_check_reconcile_always_on as _bootstrap_helpers
-    import test_bootstrap_driver as _driver_helpers
-    import test_identity_payload_gate as _identity_helpers
-    import test_install_snapshot_ps1 as _snapshot_helpers
+from .test_bootstrap_check_reconcile_always_on import _clean_env, _make_fake_plugin
+from .test_bootstrap_driver import native_bootstrap as _native_bootstrap
+from .test_identity_payload_gate import (
+    prepare_payload as _prepare_payload, prepare_runtime as _prepare_runtime,
+    invoke as _invoke, launcher as _launcher, load_module as _load_module,
+)
+from .test_install_snapshot_ps1 import _isolated_install_env, _stage_payload
+from .test_payload_invocation import _installer_function as _raw_installer_function
 
-    _clean_env: Callable[..., dict[str, str]] = _bootstrap_helpers._clean_env
-    _make_fake_plugin: Callable[..., Path] = _bootstrap_helpers._make_fake_plugin
-    native_bootstrap: Callable[..., Any] = _driver_helpers.native_bootstrap
-    prepare_payload: Callable[..., Any] = _identity_helpers.prepare_payload
-    prepare_runtime: Callable[..., None] = _identity_helpers.prepare_runtime
-    invoke: Callable[..., subprocess.CompletedProcess[str]] = _identity_helpers.invoke
-    launcher: Callable[..., list[str]] = _identity_helpers.launcher
-    load_module: Callable[..., ModuleType] = _identity_helpers.load_module
-    _isolated_install_env: Callable[..., dict[str, str]] = _snapshot_helpers._isolated_install_env
-    _stage_payload: Callable[..., Path] = _snapshot_helpers._stage_payload
-else:
-    from .test_bootstrap_check_reconcile_always_on import _clean_env, _make_fake_plugin
-    from .test_bootstrap_driver import native_bootstrap
-    from .test_identity_payload_gate import prepare_payload, prepare_runtime, invoke, launcher, load_module
-    from .test_install_snapshot_ps1 import _isolated_install_env, _stage_payload
+
+class _Invoke(Protocol):
+    def __call__(
+        self, payload: Path, env: dict[str, str], cwd: Path, *args: str,
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+# The shared legacy fixtures expose these concrete native-launch interfaces.
+prepare_payload = cast(Callable[[Path, str], tuple[Path, Path, Path, str, str]], _prepare_payload)
+prepare_runtime = cast(Callable[[Path, Path], None], _prepare_runtime)
+invoke = cast(_Invoke, _invoke)
+launcher = cast(Callable[[Path], list[str]], _launcher)
+native_bootstrap = cast(Callable[[Path, Path, Path], list[str]], _native_bootstrap)
+load_module = cast(Callable[[Path, str], ModuleType], _load_module)
+_installer_function = cast(Callable[[str], str], _raw_installer_function)
 
 PLUGIN = Path(__file__).resolve().parents[1]
 
@@ -136,7 +138,7 @@ def test_native_batch_reads_real_cache_without_service(tmp_path: Path, monkeypat
 
 
 @pytest.mark.parametrize("environment_database", [False, True])
-def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, environment_database: Any) -> None:
+def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, environment_database: bool) -> None:
     home, payload, runtime, _identity, _context = prepare_payload(tmp_path, "legacy")
     project = tmp_path / "selected repository"
     project.mkdir()
@@ -186,7 +188,7 @@ def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, en
 
 
 @pytest.mark.parametrize("enabled,code", [(False, 2), (True, 1)])
-def test_native_cold_configuration_root_respects_scope_and_no_provisioning(tmp_path: Path, enabled: Any, code: int) -> None:
+def test_native_cold_configuration_root_respects_scope_and_no_provisioning(tmp_path: Path, enabled: bool | str | None, code: int) -> None:
     home, payload, runtime, _identity, _context = prepare_payload(tmp_path, "legacy")
     project = tmp_path / "selected"
     project.mkdir()
@@ -293,9 +295,7 @@ def test_native_cold_scope_rejects_drive_relative_before_provisioning(tmp_path: 
     (["lock"], False, 1, "runtime not provisioned"),
     (["installer-readiness"], False, 0, "configuration-empty"),
 ])
-def test_native_scoped_admission_preserves_no_provisioning_commands(
-    tmp_path: Path, arguments: list[str], enabled: Any, code: int, diagnostic: str,
-) -> None:
+def test_native_scoped_admission_preserves_no_provisioning_commands(tmp_path: Path, arguments: list[str], enabled: bool | str | None, code: int, diagnostic: str) -> None:
     home, payload, runtime, project, receipt, env = _scoped_first_use_fixture(tmp_path)
     if not enabled:
         for path in (project / ".agent-vault.json", home / "native.json"):
@@ -310,9 +310,7 @@ def test_native_scoped_admission_preserves_no_provisioning_commands(
 @pytest.mark.parametrize("dispatcher_aware", [False, True])
 @pytest.mark.parametrize("operation", ["scope", "contract"])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_native_user_shortcut_preserves_cold_scope_and_read_only_contract(
-    tmp_path: Path, dispatcher_aware: bool, operation: str, prepared: bool,
-) -> None:
+def test_native_user_shortcut_preserves_cold_scope_and_read_only_contract(tmp_path: Path, dispatcher_aware: bool, operation: str, prepared: bool) -> None:
     import shlex
 
     home, payload, runtime, project, receipt, env = _scoped_first_use_fixture(tmp_path)
@@ -390,6 +388,7 @@ def test_native_user_shortcut_preserves_cold_scope_and_read_only_contract(
             "configuration-root-v1", "batch-get-v1", "ssh-key-install-pin-v1",
             "authenticated-curl-v1", "daemon-bind-default-v1",
             "preserved-cache-recovery-v1", "credential-read-require-running-v1",
+            "native-default-owner-v1",
         ]
     if not prepared and dispatcher_aware and operation == "contract":
         assert json.loads(result.stdout)["runtime_prepared"] is False
@@ -419,7 +418,7 @@ def test_native_payload_explains_missing_repository_before_unlock(tmp_path: Path
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows PowerShell strict-mode contract")
 @pytest.mark.parametrize("reason", [None, "repository-context-missing", "startup"])
-def test_native_activation_failure_retains_diagnostic_under_strict_mode(tmp_path: Path, reason: str) -> None:
+def test_native_activation_failure_retains_diagnostic_under_strict_mode(tmp_path: Path, reason: str | None) -> None:
     home, payload, runtime, _identity, _context = prepare_payload(tmp_path, "legacy")
     failure = {"state": "failed", "detail": "fixture invalid configuration"}
     if reason == "repository-context-missing":
@@ -477,9 +476,9 @@ def test_native_cold_activation_qualifies_reader_without_installing(tmp_path: Pa
     old = tmp_path / "old" / "python.exe"
     alias = tmp_path / "WindowsApps" / "python.exe"
     launcher_path = tmp_path / "launcher" / "py.exe"
-    physical = Path(getattr(sys, "_base_executable"))
+    physical = Path(getattr(sys, "_base_executable", sys.executable))
 
-    def literal(value: Any) -> str:
+    def literal(value: object) -> str:
         return "'" + str(value).replace("'", "''") + "'"
 
     candidates = {
@@ -646,9 +645,7 @@ def test_posix_cold_activation_qualifies_reader_without_installing(tmp_path: Pat
     [(["--not-a-valid-option"], 2, "Unknown option"),
      (["--install-dir"], 1, "--install-dir requires a directory")],
 )
-def test_native_installer_rejects_arguments_before_activation(
-    tmp_path: Path, configuration: Any, arguments: list[str], code: int, message: str,
-) -> None:
+def test_native_installer_rejects_arguments_before_activation(tmp_path: Path, configuration: bool | str | None, arguments: list[str], code: int, message: str) -> None:
     home, payload, _runtime, _identity, _context = prepare_payload(tmp_path, "legacy")
     (tmp_path / ".agent-vault.json").write_text(
         "{" if configuration == "malformed" else json.dumps({"enabled": configuration}),
@@ -704,7 +701,7 @@ def test_actual_cold_activation_uses_path_python_without_runtime(tmp_path: Path,
     )
     env = _clean_env({
         "HOME": str(home), "USERPROFILE": str(home),
-        "PATH": str(Path(getattr(sys, "_base_executable")).parent),
+        "PATH": str(Path(getattr(sys, "_base_executable", sys.executable)).parent),
     })
     result = subprocess.run(
         [executable, "-NoProfile", "-NonInteractive", "-Command", command],
@@ -721,7 +718,7 @@ def test_actual_cold_activation_uses_path_python_without_runtime(tmp_path: Path,
 
 @pytest.mark.parametrize("configuration", [None, False, "invalid", "malformed"])
 @pytest.mark.parametrize("entry", ["bootstrap", "readiness", "update"])
-def test_native_inactive_or_invalid_first_touch_never_installs(tmp_path: Path, configuration: Any, entry: str) -> None:
+def test_native_inactive_or_invalid_first_touch_never_installs(tmp_path: Path, configuration: bool | str | None, entry: str) -> None:
     home = tmp_path / "home"
     project = tmp_path / "project"
     home.mkdir()
@@ -1118,6 +1115,8 @@ def test_invalid_activation_retains_safe_reader_diagnostic(tmp_path: Path, shell
             "--cwd", str(project),
         ]
     else:
+        executable = shutil.which(shell)
+        assert executable is not None
         entry = tmp_path / "read-activation.ps1"
         entry.write_text(
             "param($Reader, $Project, $Python)\n"
@@ -1211,10 +1210,6 @@ def test_relative_config_survives_actual_marketplace_self_staging(tmp_path: Path
 @pytest.mark.skipif(os.name != "nt", reason="native installed-payload schedule staging")
 @pytest.mark.parametrize("selection", ["repo-opt-in", "invalid-config", "unavailable-project"])
 def test_schedule_staging_retains_project_for_activation_and_service_snapshot(tmp_path: Path, selection: str) -> None:
-    if TYPE_CHECKING:
-        from test_payload_invocation import _installer_function
-    else:
-        from .test_payload_invocation import _installer_function
 
     home, project = tmp_path / "home", tmp_path / "project"
     project.mkdir()

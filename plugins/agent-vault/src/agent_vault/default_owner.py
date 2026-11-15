@@ -50,5 +50,16 @@ def fallback_root(cwd: str | None = None) -> str | None:
 
 def owns_root(root: Path) -> bool:
     """A native default source is standalone data, not a Worktrees peer request."""
+    from .config import load_global_config
+
+    value = load_global_config(strict=True).get(FIELD)
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        return False
+    try:
+        matches = root.resolve() == Path(value).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if not matches:
+        return False
     configured = configured_root()
     return configured is not None and root.resolve() == configured

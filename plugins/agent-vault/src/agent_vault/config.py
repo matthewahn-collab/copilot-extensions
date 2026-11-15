@@ -7,7 +7,10 @@ import os
 import platform
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from configuration_layers import LayerOwner
 
 from .invocation import configuration_root as invocation_configuration_root
 from .configuration_scope import (
@@ -127,6 +130,9 @@ class ResolvedVault:
     group: str | None
     port: int
     sources: dict[str, str]
+    if TYPE_CHECKING:
+        @property
+        def configuration_provenance(self) -> dict[str, LayerOwner]: ...
 
 
 def daemon_bind_port(context: ResolvedVault) -> int:

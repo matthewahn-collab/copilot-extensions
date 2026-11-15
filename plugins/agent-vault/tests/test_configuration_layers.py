@@ -1,12 +1,12 @@
-from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, NoReturn
+from __future__ import annotations
+import json
 import os
 import subprocess
 import sys
-
-import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, NoReturn, cast
 
 import pytest
 from configuration_layers import ConfigurationError
@@ -14,7 +14,7 @@ from configuration_layers import ConfigurationError
 from agent_vault import config, configuration, _peer_launch
 
 
-def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str="bound") -> tuple[Path, Path, Path, Path, dict[str, Any]]:
+def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str = "bound") -> tuple[Path, Path, Path, Path, dict[str, Any]]:
     base, knowledge, local = (tmp_path / part for part in ("base", "knowledge", "local"))
     for root in (base, knowledge, local):
         root.mkdir()
@@ -43,7 +43,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str="bound")
     return base, knowledge, local, global_path, report
 
 
-def write(root: Path, values: Any) -> None:
+def write(root: Path, values: dict[str, Any]) -> None:
     (root / ".agent-vault.json").write_text(json.dumps(values), encoding="utf-8")
 
 
@@ -63,9 +63,7 @@ def test_cli_missing_repository_is_actionable_without_traceback(monkeypatch: pyt
     assert "Traceback" not in error
 
 
-def test_payload_reader_reports_missing_repository_without_private_error_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_payload_reader_reports_missing_repository_without_private_error_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     import importlib.util
     import sys
     from pathlib import Path
@@ -80,7 +78,7 @@ def test_payload_reader_reports_missing_repository_without_private_error_text(
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setattr(sys, "argv", [str(script), "--cwd", str(tmp_path)])
 
-    def missing(cwd: Any) -> NoReturn:
+    def missing(cwd: str) -> NoReturn:
         raise RepositoryContextRequired()
 
     monkeypatch.setattr(configuration, "runtime_enabled", missing)
@@ -108,13 +106,11 @@ def test_runtime_activation_uses_existing_qualified_layers(tmp_path: Path, monke
         configuration.runtime_enabled(str(base))
 
 
-def test_batch_reports_invalid_configuration_without_touching_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_batch_reports_invalid_configuration_without_touching_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     import io
     from types import SimpleNamespace
 
-    from agent_vault import cache, cli
+    from agent_vault import cache, cli, credential_reads
 
     setup(tmp_path, monkeypatch, binding="unresolved")
     monkeypatch.setattr(cache, "get_cache", lambda: pytest.fail("invalid context reached cache"))
@@ -131,11 +127,12 @@ def test_batch_reports_invalid_configuration_without_touching_cache(
     assert all(row["error"].startswith("context_invalid;") for row in results)
     assert captured.err == ""
     with pytest.raises(ConfigurationError):
-        cli.cmd_get(SimpleNamespace(entry="Example/one", field="password"))
+        get = cast(Callable[[SimpleNamespace], int], credential_reads.cmd_get)
+        get(SimpleNamespace(entry="Example/one", field="password"))
 
 
 @pytest.mark.parametrize("value", [None, "true", 1, {}, []])
-def test_runtime_activation_rejects_nonboolean_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: Any) -> None:
+def test_runtime_activation_rejects_nonboolean_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object) -> None:
     base, knowledge, local, global_path, report = setup(tmp_path, monkeypatch)
     write(knowledge, {"enabled": value})
     with pytest.raises(RuntimeError, match="enabled must be a boolean"):
@@ -220,9 +217,7 @@ def test_native_project_scope_preserves_database_expansion(tmp_path: Path, monke
     assert result.sources["kpdb"] == "env"
 
 
-def test_native_project_scope_selects_repo_without_changing_cwd_or_native_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_native_project_scope_selects_repo_without_changing_cwd_or_native_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     from agent_vault import cli
 
     home, project = tmp_path / "home", tmp_path / "project"
@@ -251,9 +246,7 @@ def test_native_project_scope_selects_repo_without_changing_cwd_or_native_paths(
 
 
 @pytest.mark.parametrize("already_unlocked", [False, True])
-def test_native_project_unlock_tags_real_requests_with_selected_database(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], already_unlocked: bool,
-) -> None:
+def test_native_project_unlock_tags_real_requests_with_selected_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], already_unlocked: bool) -> None:
     from agent_vault import cli, extensions
 
     home, project = tmp_path / "home", tmp_path / "project"
@@ -274,10 +267,10 @@ def test_native_project_unlock_tags_real_requests_with_selected_database(
         cli, "gui_prompt_password", lambda *args: pytest.fail("unexpected password prompt"),
     )
     expected = str(project / "selected.kdbx")
-    requests = []
+    requests: list[dict[str, Any]] = []
     unlocked = already_unlocked
 
-    def transport(request: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def transport(request: dict[str, Any], *args: object, **kwargs: object) -> dict[str, Any]:
         nonlocal unlocked
         requests.append(dict(request))
         if request["action"] == "unlock":
@@ -301,9 +294,7 @@ def test_native_project_unlock_tags_real_requests_with_selected_database(
     ["--configuration-root", "relative", "unlock"],
     ["--configuration-root", "one", "--configuration-root", "two", "unlock"],
 ])
-def test_native_project_scope_rejects_invalid_requests_before_dispatch(
-    monkeypatch: pytest.MonkeyPatch, arguments: list[str],
-) -> None:
+def test_native_project_scope_rejects_invalid_requests_before_dispatch(monkeypatch: pytest.MonkeyPatch, arguments: list[str]) -> None:
     from agent_vault import cli
 
     monkeypatch.setattr(cli, "_main", lambda argv: pytest.fail("invalid scope reached dispatch"))
@@ -329,9 +320,7 @@ def test_native_invocation_contract_is_read_only(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("router_owned", [False, True])
-def test_native_project_scope_consumes_only_router_owned_provisioning_guard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], router_owned: bool,
-) -> None:
+def test_native_project_scope_consumes_only_router_owned_provisioning_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], router_owned: bool) -> None:
     from agent_vault import cli
 
     monkeypatch.setenv("AGENT_VAULT_NO_SELFPROVISION", "1")
@@ -375,9 +364,7 @@ def test_native_project_scope_composes_with_resident_source(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("resident", [False, True])
-def test_native_project_scope_preserves_extension_default_and_resident_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resident: bool,
-) -> None:
+def test_native_project_scope_preserves_extension_default_and_resident_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resident: bool) -> None:
     from pathlib import Path
 
     from agent_vault import configuration_scope, extensions
@@ -397,9 +384,9 @@ def test_native_project_scope_preserves_extension_default_and_resident_selection
         selected.mkdir()
         config.bind_service_configuration(str(selected))
         expected_hint = str(selected)
-    seen = []
+    seen: list[str | None] = []
 
-    def contribute(cwd: Any) -> dict[str, Any]:
+    def contribute(cwd: str | None) -> dict[str, str]:
         seen.append(cwd)
         name = Path(cwd).name if cwd is not None else "default"
         return {"kpdb": str(tmp_path / f"{name}.kdbx"), "group": name}
@@ -420,7 +407,6 @@ def test_native_project_scope_preserves_extension_default_and_resident_selection
 
 
 def test_actual_absent_owner_keeps_unbound_vault_defaults_without_open_or_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-
     for name in ("COPILOT_EXTENSIONS_CONTEXT", "AGENT_CONFIGURATION_CONTEXT",
                  "AGENT_VAULT", "KPDB", "VAULT_GROUP", "AGENT_VAULT_PORT",
                  "AGENT_VAULT_PINNED_CONTEXT"):
@@ -428,7 +414,7 @@ def test_actual_absent_owner_keeps_unbound_vault_defaults_without_open_or_bootst
     monkeypatch.setenv("AGENT_VAULT_CONFIG", str(tmp_path / "absent-global.json"))
     monkeypatch.setattr(config, "_ext_config", lambda cwd: {})
 
-    def no_process(*args: Any, **kwargs: Any) -> NoReturn:
+    def no_process(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("vault selection must not install an owner or open a vault")
 
     monkeypatch.setattr(subprocess, "run", no_process)
@@ -461,7 +447,7 @@ def test_native_unready_legacy_owner_preserves_vault_defaults(tmp_path: Path, mo
     monkeypatch.setenv("AGENT_VAULT_CONFIG", str(tmp_path / "absent-global.json"))
     monkeypatch.setattr(config, "_ext_config", lambda cwd: {})
 
-    def no_process(*args: Any, **kwargs: Any) -> NoReturn:
+    def no_process(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("an unready optional owner must not bootstrap or open a vault")
 
     monkeypatch.setattr(subprocess, "run", no_process)
@@ -474,9 +460,7 @@ def test_native_unready_legacy_owner_preserves_vault_defaults(tmp_path: Path, mo
     (True, 0), (False, 0), (None, 0), ("invalid", 0), (True, 126),
 ])
 @pytest.mark.parametrize("layout", ["versioned", "application", "adjacent"])
-def test_installed_reader_uses_retained_sdk_for_qualified_activation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], enabled: Any, owner_code: int, layout: str,
-) -> None:
+def test_installed_reader_uses_retained_sdk_for_qualified_activation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], enabled: bool | str | None, owner_code: int, layout: str) -> None:
     import shutil
     import subprocess
     import sys
@@ -519,9 +503,9 @@ def test_installed_reader_uses_retained_sdk_for_qualified_activation(
     for name in ("AGENT_RT_ROOT", "AGENT_VAULT_HOME", "COPILOT_EXTENSIONS_CONTEXT",
                  "AGENT_CONFIGURATION_CONTEXT"):
         monkeypatch.delenv(name, raising=False)
-    calls = []
+    calls: list[list[str]] = []
 
-    def run(argv: Any, **kwargs: Any) -> Any:
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         assert argv == [
             str(python), "-I", "-B", "-X", "utf8", "-B", "-m", "agent_worktrees",
             "state-root", "--configuration", "--json",
@@ -542,9 +526,9 @@ def test_installed_reader_uses_retained_sdk_for_qualified_activation(
         assert configuration.runtime_enabled(str(base)) is (enabled is True)
         from agent_vault import cli
 
-        probes = []
+        probes: list[dict[str, Any]] = []
 
-        def ping(request: Any, **kwargs: Any) -> dict[str, Any]:
+        def ping(request: dict[str, Any], **kwargs: object) -> dict[str, Any]:
             assert request == {"action": "ping"}
             assert kwargs == {"strict_endpoint": True}
             probes.append(request)
@@ -552,7 +536,7 @@ def test_installed_reader_uses_retained_sdk_for_qualified_activation(
 
         monkeypatch.setattr(cli, "send_command", ping)
         monkeypatch.chdir(base)
-        assert cli.cmd_installer_readiness(None) == 0
+        assert cli.main(["installer-readiness"]) == 0
         readiness = json.loads(capsys.readouterr().out)
         assert readiness["state"] == ("ready" if enabled is True else "configuration-empty")
         assert len(probes) == int(enabled is True)
@@ -574,9 +558,9 @@ def test_real_loader_checks_delivered_cell_against_actual_owner(tmp_path: Path, 
     own_root = cell / "plugins" / "agent-vault"
     own_root.mkdir(parents=True)
     report["context"]["installation_cell"] = str(cell if matching_cell else tmp_path / "foreign-cell")
-    calls = []
+    calls: list[tuple[str, Path, str]] = []
 
-    def validate(owner: Any, root: Path, raw: Any) -> Any:
+    def validate(owner: str, root: Path, raw: str) -> dict[str, str]:
         calls.append((owner, root, raw))
         assert root == own_root
         assert raw == str(own_root / "install.json")
@@ -620,7 +604,7 @@ def test_qualified_deployed_owner_layout_and_refusal(tmp_path: Path, shape: str)
     python.parent.mkdir(parents=True)
     python.write_bytes(b"fixture interpreter; never executed")
 
-    def resolve() -> Any:
+    def resolve() -> Path | None:
         return deployed_runtime_python(
             root, resolver=resolver, environment={"SystemRoot": str(tmp_path)},
             runner=lambda argv, **kwargs: subprocess.CompletedProcess(
@@ -685,9 +669,9 @@ def test_optional_older_peer_preserves_native_vault_or_fails_real_refusal(tmp_pa
     monkeypatch.setattr(_peer_launch, "validate_owner", lambda *args:
                         {"cellRoot": str(cell), "pluginRoot": str(own)})
     monkeypatch.setattr(_peer_launch, "launch_prefix", lambda *args: ["qualified-peer"])
-    calls = []
+    calls: list[list[str]] = []
 
-    def run(argv: Any, **kwargs: Any) -> Any:
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         assert argv == ["qualified-peer", "state-root", "--configuration", "--json"]
         calls.append(argv)
         return subprocess.CompletedProcess(argv, code, b"{bad-json", diagnostic.encode())
