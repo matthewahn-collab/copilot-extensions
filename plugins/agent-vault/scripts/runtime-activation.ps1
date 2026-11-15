@@ -5,7 +5,8 @@ function Get-VaultRuntimeActivation {
         [string]$Context,
         [string]$Python,
         [string]$InvocationDirectory,
-        [switch]$RetainNativeSelector
+        [switch]$RetainNativeSelector,
+        [switch]$ExplicitConfigurationRoot
     )
     $reader = Join-Path $PSScriptRoot 'runtime-activation.py'
     . (Join-Path $PSScriptRoot 'versioned_runtime_native.ps1')
@@ -20,6 +21,7 @@ function Get-VaultRuntimeActivation {
     $readerArgs = @('--cwd', $Project)
     if ($InvocationDirectory) { $readerArgs += "--invocation-cwd=$InvocationDirectory" }
     if ($RetainNativeSelector) { $readerArgs += '--retain-native-selector' }
+    if ($ExplicitConfigurationRoot) { $readerArgs += '--explicit-configuration-root' }
     if ($RuntimeRoot) { $readerArgs += "--runtime-root=$RuntimeRoot" }
     if ($PSBoundParameters.ContainsKey('Context')) { $readerArgs += "--context=$Context" }
     $ErrorActionPreference = 'Continue'

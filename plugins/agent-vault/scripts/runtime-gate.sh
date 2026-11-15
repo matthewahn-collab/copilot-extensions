@@ -238,7 +238,11 @@ fi
 if [[ -z "${AGENT_VAULT_PINNED_CONTEXT+x}" ]]; then
     . "$SCRIPT_DIR/runtime-activation.sh"
     activation_code=0
-    activation="$(vault_runtime_activation "$PROJECT_ROOT" "$AGENT_RT_PY" "--runtime-root=$RUNTIME_ROOT" "--context=$CONTEXT" "--invocation-cwd=$INVOCATION_DIRECTORY" --retain-native-selector)" || activation_code=$?
+    activation_scope=()
+    if [[ "$has_configuration_root" == true ]]; then
+        activation_scope+=(--explicit-configuration-root)
+    fi
+    activation="$(vault_runtime_activation "$PROJECT_ROOT" "$AGENT_RT_PY" "--runtime-root=$RUNTIME_ROOT" "--context=$CONTEXT" "--invocation-cwd=$INVOCATION_DIRECTORY" --retain-native-selector "${activation_scope[@]}")" || activation_code=$?
     if [[ "$activation_code" == 2 ]]; then
         if [[ "${command_arguments[0]:-}" == installer-readiness ]]; then
             printf '%s\n' "$activation"

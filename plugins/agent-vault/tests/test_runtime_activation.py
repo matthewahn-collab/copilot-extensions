@@ -187,6 +187,53 @@ def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, en
     assert not (runtime / "run").exists()
 
 
+@pytest.mark.parametrize("default_config", ['{"enabled":false}', '{"vaults":{}}'])
+def test_native_explicit_root_without_local_file_keeps_bound_knowledge(
+    tmp_path: Path, default_config: str,
+) -> None:
+    home, payload, runtime, _, _ = prepare_payload(tmp_path, "legacy")
+    (tmp_path / ".agent-vault.json").unlink()
+    project, knowledge, default = (tmp_path / part for part in ("project", "knowledge", "default"))
+    for path in (project, knowledge, default):
+        path.mkdir()
+    (knowledge / ".agent-vault.json").write_text(
+        '{"enabled":true,"group":"bound-group"}', encoding="utf-8",
+    )
+    (default / ".agent-vault.json").write_text(default_config, encoding="utf-8")
+    native = home / "native.json"
+    native.write_text(json.dumps({
+        "default_configuration_root": str(default),
+        "vaults": {"fixture": {"kpdb": str(home / "unused.kdbx")}},
+    }), encoding="utf-8")
+    report = {
+        "schema": "agent-worktrees.configuration", "version": 1,
+        "context": {
+            "repository_id": "qualified", "execution_machine": "fixture",
+            "installation_cell": "legacy", "binding": "bound",
+            "base_root": str(project), "knowledge_root": str(knowledge),
+        },
+    }
+    module = payload / "src" / "agent_vault" / "configuration.py"
+    module.write_text(
+        module.read_text(encoding="utf-8")
+        + "\ndef _legacy_report(root):\n"
+        + f"    assert root == Path({str(project)!r})\n"
+        + f"    return {report!r}\n",
+        encoding="utf-8",
+    )
+    prepare_runtime(runtime, payload)
+    env = _clean_env({
+        "HOME": str(home), "USERPROFILE": str(home),
+        "COPILOT_PLUGIN_ROOT": str(payload), "AGENT_VAULT_HOME": str(runtime),
+        "AGENT_VAULT_CONFIG": str(native), "AGENT_VAULT_NO_SELFPROVISION": "1",
+    })
+    result = invoke(payload, env, home, "--configuration-root", str(project), "which", "--json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["group"] == "bound-group"
+    assert not (project / ".agent-vault.json").exists()
+    assert not (runtime / "run").exists()
+
+
 @pytest.mark.parametrize("enabled,code", [(False, 2), (True, 1)])
 def test_native_cold_configuration_root_respects_scope_and_no_provisioning(tmp_path: Path, enabled: bool | str | None, code: int) -> None:
     home, payload, runtime, _identity, _context = prepare_payload(tmp_path, "legacy")

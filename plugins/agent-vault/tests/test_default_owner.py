@@ -66,6 +66,10 @@ def owners(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Owners:
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(config, "_ext_config", lambda _cwd: {})
+    from agent_vault import configuration_scope
+
+    monkeypatch.setattr(configuration_scope, "_SERVICE_CONFIGURATION_ROOT", None)
+    monkeypatch.setattr(configuration_scope, "_SERVICE_NATIVE_DEFAULT", False)
     return home, base, project, native
 
 
@@ -189,6 +193,105 @@ def test_retained_resident_source_is_not_replaced_by_default(
 
 
 @pytest.mark.parametrize("selection", ["explicit", "caller", "resident"])
+def test_same_root_selection_keeps_qualified_layers(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+) -> None:
+    home, base, knowledge, _ = owners
+    (base / ".agent-vault.json").write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "vault": "first",
+                "kpdb": "native.kdbx",
+            }
+        )
+    )
+    local = home / "local"
+    local.mkdir()
+    (local / ".agent-vault.json").write_text('{"group":"machine-group"}')
+    report = {
+        "schema": "agent-worktrees.configuration",
+        "version": 1,
+        "context": {
+            "repository_id": "qualified",
+            "execution_machine": "fixture",
+            "installation_cell": "legacy",
+            "binding": "bound",
+            "base_root": str(base),
+            "knowledge_root": str(knowledge),
+        },
+        "repository_machine_root": str(local),
+    }
+    monkeypatch.setattr(configuration, "_legacy_report", lambda root: report)
+    if selection == "caller":
+        monkeypatch.chdir(base)
+    elif selection == "resident":
+        config.bind_service_configuration(str(base))
+    with use_configuration_root(str(base) if selection == "explicit" else None):
+        result = config.resolve_context(strict=True)
+    assert result.vault_name == "second"
+    assert result.group == "machine-group"
+    assert result.kpdb == str(base / "native.kdbx")
+
+
+def test_native_default_provenance_survives_resident_capture(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_vault import configuration_scope
+    from agent_vault.service_arguments import parse_service_arguments
+
+    home, base, _, _ = owners
+    monkeypatch.setattr(configuration_scope, "_SERVICE_CONFIGURATION_ROOT", None)
+    monkeypatch.setattr(
+        configuration,
+        "_legacy_report",
+        lambda root: pytest.fail("fallback queried a peer"),
+    )
+    snapshot = configuration.service_configuration_snapshot()
+    assert snapshot["root"] == str(base)
+    assert snapshot["native_default_owner"] == "1"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "service",
+            "--foreground",
+            "--configuration-root",
+            snapshot["root"],
+            "--native-default-owner",
+        ],
+    )
+    parse_service_arguments()
+    monkeypatch.chdir(home)
+    assert config.resolve_context(strict=True).vault_name == "first"
+    assert configuration.runtime_enabled() is True
+    with pytest.raises(ValueError, match="differs"):
+        config.bind_service_configuration(str(home), native_default=True)
+
+
+def test_native_default_launch_retains_selection_provenance(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_vault import launch
+
+    home, base, _, _ = owners
+    monkeypatch.setenv("AGENT_VAULT_HOME", str(home / "runtime"))
+    monkeypatch.setattr(
+        configuration,
+        "_legacy_report",
+        lambda root: pytest.fail("fallback queried a peer"),
+    )
+    arguments: list[str] = []
+    monkeypatch.setattr(launch, "spawn_daemon", lambda argv, **kwargs: arguments.extend(argv))
+    launch.spawn_service(["--foreground"])
+    assert arguments[-3:] == ["--configuration-root", str(base), "--native-default-owner"]
+
+
+@pytest.mark.parametrize("selection", ["explicit", "caller", "resident"])
 @pytest.mark.parametrize("damage", ["custody", "missing", "relative", "nonstring", "nul"])
 def test_unrelated_invalid_default_does_not_veto_selected_owner(
     owners: Owners, monkeypatch: pytest.MonkeyPatch, selection: str, damage: str
@@ -203,7 +306,9 @@ def test_unrelated_invalid_default_does_not_veto_selected_owner(
     else:
         document = json.loads(native.read_text())
         document["default_configuration_root"] = {
-            "relative": ".", "nonstring": False, "nul": str(base / "invalid\0owner"),
+            "relative": ".",
+            "nonstring": False,
+            "nul": str(base / "invalid\0owner"),
         }[damage]
         native.write_text(json.dumps(document))
     monkeypatch.setattr(configuration, "_legacy_report", lambda *_args: None)

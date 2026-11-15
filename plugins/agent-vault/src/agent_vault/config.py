@@ -17,11 +17,12 @@ from .configuration_scope import (
     REPO_CONFIG_NAME,
     bind_service_configuration as bind_service_configuration,
     configuration_source as resident_configuration_source,
+    uses_native_default as resident_uses_native_default,
 )
 
 
-def configuration_source(cwd: str | None = None) -> str | None:
-    """Keep an absent extension hint unless a caller or resident selected one."""
+def configuration_selection(cwd: str | None = None) -> tuple[str | None, bool]:
+    """Retain why a root was selected, not just its filesystem identity."""
     selected = invocation_configuration_root(cwd)
     if selected is not None:
         if (
@@ -31,14 +32,21 @@ def configuration_source(cwd: str | None = None) -> str | None:
         ):
             from .default_owner import fallback_root
 
-            return fallback_root(cwd) or selected
-        return selected
+            fallback = fallback_root(cwd)
+            return (fallback, True) if fallback is not None else (selected, False)
+        return selected, False
     selected = resident_configuration_source()
     if selected is not None:
-        return selected
+        return selected, resident_uses_native_default()
     from .default_owner import fallback_root
 
-    return fallback_root()
+    fallback = fallback_root()
+    return fallback, fallback is not None
+
+
+def configuration_source(cwd: str | None = None) -> str | None:
+    """Keep an absent extension hint unless a caller or resident selected one."""
+    return configuration_selection(cwd)[0]
 
 
 def configuration_root(cwd: str | None = None) -> str:

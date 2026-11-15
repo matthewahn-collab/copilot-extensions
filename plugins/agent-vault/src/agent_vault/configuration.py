@@ -17,18 +17,19 @@ FIELDS = {"vault", "group", "enabled"}
 
 def service_configuration_root(cwd: str | None = None) -> str:
     """Qualify the native discovery directory before a resident changes cwd."""
-    from .config import configuration_root
+    from .config import configuration_selection
 
-    root = Path(configuration_root(cwd))
+    selected, native_default = configuration_selection(cwd)
+    root = Path(selected or os.getcwd())
     if not root.is_absolute() or not root.is_dir():
         raise ConfigurationError("service configuration root must be an existing absolute directory")
-    report = owner_report(root)
+    report = owner_report(root, native_default=True) if native_default else owner_report(root)
     if report is not None:
         context_from_owner(report)
-    selected = str(root)
-    if any(ord(character) < 32 for character in selected):
+    root_text = str(root)
+    if any(ord(character) < 32 for character in root_text):
         raise ConfigurationError("service configuration root contains control characters")
-    return selected
+    return root_text
 
 
 def service_configuration_snapshot(cwd: str | None = None) -> dict[str, str]:
@@ -39,7 +40,12 @@ def service_configuration_snapshot(cwd: str | None = None) -> dict[str, str]:
     path = str(Path(root, selected).absolute())
     if any(ord(character) < 32 for character in path):
         raise ConfigurationError("service configuration path contains control characters")
-    return {"root": root, "config": path}
+    from .config import configuration_selection
+
+    snapshot = {"root": root, "config": path}
+    if configuration_selection(cwd)[1]:
+        snapshot["native_default_owner"] = "1"
+    return snapshot
 
 
 def _legacy_report(root: Path) -> dict[str, Any] | None:
@@ -100,9 +106,8 @@ def _checked_report(
     return report
 
 
-def owner_report(root: Path) -> dict[str, Any] | None:
+def owner_report(root: Path, *, native_default: bool = False) -> dict[str, Any] | None:
     from .config import home_dir
-    from .default_owner import owns_root
 
     own_root = Path(os.environ.get("AGENT_RT_ROOT") or home_dir())
     raw = os.environ.get("COPILOT_EXTENSIONS_CONTEXT", "")
@@ -117,7 +122,7 @@ def owner_report(root: Path) -> dict[str, Any] | None:
             "agent-vault", own_root, raw,
         )
     report = delivered_context(repository_root=root)
-    if report is None and owns_root(root):
+    if report is None and native_default:
         return None
     if report is not None:
         _checked_report(report, own)
@@ -157,9 +162,11 @@ def compose_preferences(
     cwd: str | None, repo_data: dict[str, Any], global_data: dict[str, Any],
     ext_data: dict[str, Any],
 ) -> Composition | None:
-    from .config import configuration_root
+    from .config import configuration_selection
 
-    report = owner_report(Path(configuration_root(cwd)).resolve())
+    selected, native_default = configuration_selection(cwd)
+    root = Path(selected or os.getcwd()).resolve()
+    report = owner_report(root, native_default=True) if native_default else owner_report(root)
     if report is None:
         return None
     context = context_from_owner(report)
@@ -216,8 +223,7 @@ def runtime_enabled(cwd: str | None = None) -> bool:
     """Resolve explicit runtime opt-in without loading extensions or a backend."""
     from .config import _discover_repo_config, _validate_config_data, configuration_root, load_global_config
 
-    cwd = configuration_root(cwd)
-    _, repository = _discover_repo_config(cwd, strict=True)
+    _, repository = _discover_repo_config(configuration_root(cwd), strict=True)
     machine = load_global_config(strict=True)
     _validate_config_data(repository, "repository vault configuration")
     _validate_config_data(machine, "global vault configuration")

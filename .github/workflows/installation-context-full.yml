@@ -434,6 +434,25 @@ jobs:
         run: >-
           python tools/run-plugin-tests.py update-driver
           --test-file tests/test_first_use.py -k activation_selectors
+      - name: Diagnose native cache ancestor protection on failure
+        if: failure() && runner.os == 'Windows'
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / "libs/agent-procutil/src"))
+          from agent_procutil import python_cache_permissions
+
+          temporary = Path(os.environ["TEMP"])
+          for path in (temporary, *temporary.parents):
+              try:
+                  python_cache_permissions.check(path, ancestor=True)
+              except (OSError, ValueError) as error:
+                  print(f"cache-ancestor={path}; refusal={type(error).__name__}: {error}")
+              else:
+                  print(f"cache-ancestor={path}; protection=accepted")
 
   vault-activation-windows:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-activation'

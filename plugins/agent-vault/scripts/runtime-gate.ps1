@@ -294,7 +294,7 @@ if ($commandArguments.Count -gt 0 -and $commandArguments[0] -ceq 'invocation-con
 if (-not (Test-Path Env:AGENT_VAULT_PINNED_CONTEXT)) {
     try {
         . (Join-Path $scriptDir 'runtime-activation.ps1')
-        $activation = Get-VaultRuntimeActivation -Project $project -InvocationDirectory $invocationDirectory -RuntimeRoot $runtimeRoot -Context $context -Python $runtimePython -RetainNativeSelector
+        $activation = Get-VaultRuntimeActivation -Project $project -InvocationDirectory $invocationDirectory -RuntimeRoot $runtimeRoot -Context $context -Python $runtimePython -RetainNativeSelector -ExplicitConfigurationRoot:$hasConfigurationRoot
     } catch {
         if ($_.Exception.Data['VaultRepositoryContextMissing']) {
             [Console]::Error.WriteLine("[agent-vault] repository context is missing. Run from an adopted repository or use '<repo> vault unlock' from any directory.")

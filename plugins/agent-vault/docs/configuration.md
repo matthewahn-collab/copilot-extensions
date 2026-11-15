@@ -51,8 +51,14 @@ not implicitly bind a knowledge repository or invent a Worktrees context report.
 Its file may contain only `enabled`, `vault` and `group`; named database records,
 cache keys, service endpoints and protected runtime settings stay native.
 
-A malformed, missing or unsafe declared default refuses rather than selecting
-another database. Without this setting, existing repository and optional-peer
+Selection provenance is retained through cold activation and resident launch.
+Explicit, resident and caller-file roots still resolve their qualified layers
+even when their path equals the configured default. Only an actual fallback
+uses the standalone-data restriction and bypasses the optional peer.
+
+A malformed, missing or unsafe selected default refuses rather than selecting
+another database; an unrelated default cannot veto an explicit owner.
+Without this setting, existing repository and optional-peer
 behavior is unchanged. This explicit native source is a bounded part of
 [#12042](https://github.com/ThomasMichon/copilot-extensions/issues/12042), not
 automatic discovery or aggregation of all registered project owners.
