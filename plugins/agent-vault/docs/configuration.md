@@ -55,6 +55,8 @@ Selection provenance is retained through cold activation and resident launch.
 Explicit, resident and caller-file roots still resolve their qualified layers
 even when their path equals the configured default. Only an actual fallback
 uses the standalone-data restriction and bypasses the optional peer.
+Retained native defaults revalidate that exact file and its allowed fields on
+every read; removing it cannot redirect a resident to an ancestor's file.
 
 A malformed, missing or unsafe selected default refuses rather than selecting
 another database; an unrelated default cannot veto an explicit owner.

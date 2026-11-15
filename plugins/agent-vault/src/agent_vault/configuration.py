@@ -19,7 +19,7 @@ def service_configuration_root(cwd: str | None = None) -> str:
     """Qualify the native discovery directory before a resident changes cwd."""
     from .config import configuration_selection
 
-    selected, native_default = configuration_selection(cwd)
+    selected, native_default = configuration_selection(cwd, strict=True)
     root = Path(selected or os.getcwd())
     if not root.is_absolute() or not root.is_dir():
         raise ConfigurationError("service configuration root must be an existing absolute directory")
@@ -43,7 +43,7 @@ def service_configuration_snapshot(cwd: str | None = None) -> dict[str, str]:
     from .config import configuration_selection
 
     snapshot = {"root": root, "config": path}
-    if configuration_selection(cwd)[1]:
+    if configuration_selection(cwd, strict=True)[1]:
         snapshot["native_default_owner"] = "1"
     return snapshot
 
@@ -160,11 +160,11 @@ def _ordinary(raw: dict[str, Any]) -> dict[str, Any]:
 
 def compose_preferences(
     cwd: str | None, repo_data: dict[str, Any], global_data: dict[str, Any],
-    ext_data: dict[str, Any],
+    ext_data: dict[str, Any], *, strict: bool = False,
 ) -> Composition | None:
     from .config import configuration_selection
 
-    selected, native_default = configuration_selection(cwd)
+    selected, native_default = configuration_selection(cwd, strict=strict)
     root = Path(selected or os.getcwd()).resolve()
     report = owner_report(root, native_default=True) if native_default else owner_report(root)
     if report is None:
@@ -223,11 +223,11 @@ def runtime_enabled(cwd: str | None = None) -> bool:
     """Resolve explicit runtime opt-in without loading extensions or a backend."""
     from .config import _discover_repo_config, _validate_config_data, configuration_root, load_global_config
 
-    _, repository = _discover_repo_config(configuration_root(cwd), strict=True)
+    _, repository = _discover_repo_config(configuration_root(cwd, strict=True), strict=True)
     machine = load_global_config(strict=True)
     _validate_config_data(repository, "repository vault configuration")
     _validate_config_data(machine, "global vault configuration")
-    result = compose_preferences(cwd, repository, machine, {})
+    result = compose_preferences(cwd, repository, machine, {}, strict=True)
     if result is not None:
         return cast(bool, result["values"]["enabled"])
     return cast(bool, machine.get("enabled", repository.get("enabled", False)))

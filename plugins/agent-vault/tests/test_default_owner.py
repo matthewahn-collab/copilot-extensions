@@ -291,6 +291,39 @@ def test_native_default_launch_retains_selection_provenance(
     assert arguments[-3:] == ["--configuration-root", str(base), "--native-default-owner"]
 
 
+@pytest.mark.parametrize("damage", ["missing", "kpdb", "port"])
+def test_bound_default_is_revalidated_before_each_read(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    home, base, _, _ = owners
+    (base.parent / ".agent-vault.json").write_text('{"vault":"second"}')
+    config.bind_service_configuration(str(base), native_default=True)
+    source = base / ".agent-vault.json"
+    if damage == "missing":
+        source.rename(base / "retained-config.json")
+    else:
+        source.write_text(json.dumps({"enabled": True, damage: "foreign"}))
+    monkeypatch.chdir(home)
+    with pytest.raises(ConfigurationError, match=r"requires|native custody"):
+        config.resolve_context(strict=True)
+    with pytest.raises(ConfigurationError, match=r"requires|native custody"):
+        configuration.runtime_enabled()
+
+
+def test_malformed_native_json_keeps_tolerant_context_resolution(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, _, native = owners
+    native.write_text("{")
+    monkeypatch.setattr(configuration, "_legacy_report", lambda root: None)
+    assert config.resolve_context(strict=False).vault_name is None
+    with pytest.raises(RuntimeError, match="invalid configuration"):
+        config.resolve_context(strict=True)
+
+
 @pytest.mark.parametrize("selection", ["explicit", "caller", "resident"])
 @pytest.mark.parametrize("damage", ["custody", "missing", "relative", "nonstring", "nul"])
 def test_unrelated_invalid_default_does_not_veto_selected_owner(

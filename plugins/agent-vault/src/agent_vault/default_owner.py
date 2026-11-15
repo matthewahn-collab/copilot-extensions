@@ -10,11 +10,11 @@ from configuration_layers import ConfigurationError, read_source
 FIELD = "default_configuration_root"
 
 
-def configured_root() -> Path | None:
+def configured_root(*, strict: bool = True) -> Path | None:
     """Read an explicit machine-owned source; never infer one from install paths."""
     from .config import load_global_config
 
-    document = load_global_config(strict=True)
+    document = load_global_config(strict=strict)
     if FIELD not in document:
         return None
     value = document[FIELD]
@@ -33,7 +33,7 @@ def configured_root() -> Path | None:
     return root.resolve()
 
 
-def fallback_root(cwd: str | None = None) -> str | None:
+def fallback_root(cwd: str | None = None, *, strict: bool = True) -> str | None:
     """Keep delivered or locally declared repository configuration ahead of defaults."""
     from configuration_context import delivered_context
 
@@ -44,5 +44,5 @@ def fallback_root(cwd: str | None = None) -> str | None:
         source = parent / ".agent-vault.json"
         if source.exists() or source.is_symlink():
             return None
-    root = configured_root()
+    root = configured_root(strict=strict)
     return str(root) if root is not None else None

@@ -430,20 +430,33 @@ jobs:
           --test-file tests/test_runtime_activation.py
           --test-file tests/test_install_snapshot_ps1.py
           --test-file tests/test_service_launch.py
+          --junit-dir vault-configuration-consumers-junit
+      - name: Retain Vault configuration consumer results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-configuration-consumers-${{ runner.os }}-${{ github.sha }}
+          path: vault-configuration-consumers-junit
+          if-no-files-found: warn
       - name: Qualify accepted activation context under a different queue worker
         run: >-
           python tools/run-plugin-tests.py update-driver
           --test-file tests/test_first_use.py -k activation_selectors
-      - name: Diagnose native cache ancestor protection on failure
+      - name: Diagnose native cache policy on failure
         if: failure() && runner.os == 'Windows'
         shell: python
         run: |
           import os
           from pathlib import Path
+          import shutil
+          import subprocess
           import sys
+          import tempfile
+          import venv
 
           sys.path.insert(0, str(Path.cwd() / "libs/agent-procutil/src"))
           from agent_procutil import python_cache_permissions
+          import agent_procutil
 
           temporary = Path(os.environ["TEMP"])
           for path in (temporary, *temporary.parents):
@@ -453,6 +466,37 @@ jobs:
                   print(f"cache-ancestor={path}; refusal={type(error).__name__}: {error}")
               else:
                   print(f"cache-ancestor={path}; protection=accepted")
+          with tempfile.TemporaryDirectory(prefix="vault-cache-diagnostic-") as directory:
+              root = Path(directory).resolve() / "vault home"
+              slot = root / "versions" / "1.0.0"
+              venv.EnvBuilder(with_pip=False).create(slot)
+              site = slot / "Lib" / "site-packages"
+              shutil.copytree(Path(agent_procutil.__file__).parent, site / "agent_procutil")
+              (slot / ".install-complete.json").write_text(
+                  '{"version":"1.0.0","completed_at":"fixture","pid":0,"payload_hash":"'
+                  + "a" * 64 + '"}', encoding="utf-8",
+              )
+              record = site / "fixture.dist-info" / "RECORD"
+              record.parent.mkdir()
+              record.write_text("fixture.py,sha256=" + "a" * 43 + ",1\n", encoding="utf-8")
+              probe = (
+                  "import json,sys,traceback\nfrom pathlib import Path\n"
+                  "from agent_procutil import python_cache as cache\n"
+                  "root=Path(sys.argv[1]);slot=root/'versions'/'1.0.0'\n"
+                  "identity=cache._installed_identity(slot)\n"
+                  "print(json.dumps({'executable':sys.executable,'prefix':sys.prefix,"
+                  "'root':str(root),'identity':identity,"
+                  "'policy':cache.policy_arguments(root,runtime=sys.executable)}),flush=True)\n"
+                  "try:\n"
+                  " print(cache._store().prepare(root,slot,identity,read_record=cache._read_regular))\n"
+                  "except Exception:\n"
+                  " traceback.print_exc()\n"
+              )
+              subprocess.run(
+                  [str(slot / "Scripts" / "python.exe"), "-I", "-B", "-c", probe, str(root)],
+                  env={**os.environ, "LOCALAPPDATA": str(root.parent / "user-cache")},
+                  check=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
+              )
 
   vault-activation-windows:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-activation'
