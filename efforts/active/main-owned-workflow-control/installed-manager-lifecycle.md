@@ -118,6 +118,26 @@ caps, outer deadline, job/stage limits and fatal scan/session-close policy
 remain unchanged. Run 43336441832 remains failed; no prior result is relabeled.
 This adds no rollout, shared-repair, baseline-admission or Main authority.
 
+### November 16 strict migration strategy
+
+The decision prompt was:
+
+> Dev’s new strict typing gate now requires migration across 58 files touched by this PR, including substantial legacy test bodies. Which implementation strategy should I use? Both paths preserve the gate; neither raises the capture timeout or authorizes rollout.
+
+The selected option was:
+
+> Migrate within the current PR, preserving its fixes and review history (recommended)
+
+The operator's exact response was `migrate-in-current-pr`.
+
+This selects the existing PR as the implementation home for the required
+strict typing migration, including affected legacy helper/test bodies. It
+does not authorize suppressing diagnostics, weakening admission or strictness,
+changing behavior merely to satisfy annotations, raising capture or native
+deadlines, creating new execution profiles, rollout or Main activation.
+The existing fixes, review history, genuine failed runs and every earlier
+scope limit remain preserved.
+
 ## Plan
 
 The following implementation decomposition is **agent-recommended**.

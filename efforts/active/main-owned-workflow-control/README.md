@@ -60,6 +60,14 @@ job/stage deadlines, cadence, caps and fatal-error policy stay unchanged.
 The [scope approval](installed-manager-lifecycle.md#november-12-census-query-budget-approval)
 preserves the exact prompt and response; it grants no rollout or failure waiver.
 
+The November 16 implementation-strategy decision selects
+`migrate-in-current-pr`: complete the newly required strict typing migration
+within the current PR, preserving its fixes and review history rather than
+splitting typing prerequisites into separate PRs. The
+[scope approval](installed-manager-lifecycle.md#november-16-strict-migration-strategy)
+retains the exact decision. All validation gates, capture limits and rollout
+holds remain unchanged.
+
 ## Guiding Intent
 
 The former Guiding Intent is retained verbatim in Goal above. The
