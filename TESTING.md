@@ -10223,6 +10223,15 @@ Source acquisition uses the existing context-owned read-only Git HTTP owner,
 serving a bare clone of the actual frozen objects without a transport commit.
 Manager launcher proofs query the existing terminal capability for the actual
 interpreter; equal package versions cannot hide a stale generation.
+The source case uses one compact private allocation in the disposable runner's
+home, not the checkout's potentially foreign-owned ancestor chain. `--root .v`
+still selects the diagnostic destination. Every stage and the observer use the
+same private execution root; evidence is copied back before removing it, and
+removal requires confirmed settlement. Unsettled or failed evidence/cleanup
+retains the allocation explicitly in `source-runner.json`. No shared ancestor
+ACL is changed or producer ownership check disabled. Transport startup is also
+covered in a fresh `python -I` fixture process, and mocked observer controls do
+not require PowerShell to be installed; actual native observation still does.
 The original 1,800/900/300/90-second preparation/exercise/assertion/settlement
 allocations and process observer remain unchanged; settlement inventories
 remaining fixture-owned tasks and runtime processes. This case does not launch

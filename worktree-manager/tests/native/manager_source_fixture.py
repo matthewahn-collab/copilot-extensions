@@ -16,6 +16,8 @@ import manager_suite_fixture as native
 from manager_suite_artifacts import _DELIVERY, _command, _runtime_process_inventory_script, _write
 from manager_suite_artifacts import _configuration as _configuration, _env as _env
 
+sys.path.insert(0, str(native.REPO / "tools"))
+
 SCHEMA = "worktree-manager.native-source-replacement.v1"
 COMPONENTS = ("worktree-manager", "agent-worktrees")
 
@@ -82,11 +84,16 @@ def _declarations(snapshots: dict[str, str]) -> dict[str, Any]:
     return result
 
 
-def _case(directory: Path) -> tuple[Path, dict[str, Any]]:
+def _directory(directory: Path) -> Path:
     native.require_venue()
     directory = directory.resolve()
-    if directory == native.REPO or not directory.is_relative_to(native.REPO):
-        raise ValueError("Native source case must be below this checkout")
+    if directory.parent != Path.home().resolve() or not directory.name.startswith("ce-ms-"):
+        raise ValueError("Native source case needs its runner-owned private home allocation")
+    return directory
+
+
+def _case(directory: Path) -> tuple[Path, dict[str, Any]]:
+    directory = _directory(directory)
     case = directory / "source"
     setup = native._read(case / "setup.json")
     if (setup.get("schema") != SCHEMA or setup.get("mode") != "source"
@@ -195,10 +202,7 @@ def _capture(case: Path) -> dict[str, Any]:
 
 
 def prepare(directory: Path, main: str, dev: str) -> None:
-    native.require_venue()
-    directory = directory.resolve()
-    if directory == native.REPO or not directory.is_relative_to(native.REPO):
-        raise ValueError("Native source fixture storage must be below this checkout")
+    directory = _directory(directory)
     case = directory / "source"
     case.mkdir(parents=True, exist_ok=False)
     (case / "project").mkdir()

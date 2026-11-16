@@ -78,6 +78,36 @@ def test_real_source_acquisition_and_producer_provenance_share_the_owned_transpo
         opener.open(url + "/HEAD", timeout=1)
 
 
+def test_transport_starts_in_a_fresh_isolated_fixture_interpreter(
+    git_case: tuple[Path, Path, str, str],
+) -> None:
+    case, repository, main, dev = git_case
+    source.freeze_source(case, repository, main, dev)
+    program = """
+import sys, time
+from pathlib import Path
+from agent_procutil import _caller_owned
+native = Path(sys.argv[1])
+tools = native.parents[2] / 'tools'
+assert sys.flags.isolated == 1
+assert all(Path(value).resolve() != tools.resolve() for value in sys.path if value)
+original = _caller_owned.run
+def contained(*args, **options):
+    options['allow_daemon_breakaway'] = False
+    return original(*args, **options)
+_caller_owned.run = contained
+sys.path.insert(0, str(native))
+import manager_source_fixture as source
+with source.source_transport(Path(sys.argv[2]), deadline=time.monotonic()+60) as url:
+    assert url.startswith('http://127.0.0.1:')
+print('isolated transport served and closed')
+"""
+    observed = native._run(
+        [sys.executable, "-I", "-B", "-c", program, Path(__file__).parent, case], case, timeout=90,
+    )
+    assert observed.stdout.strip() == "isolated transport served and closed"
+
+
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native Windows frontdoors")
 @pytest.mark.parametrize("stale", ("cmd", "ps1"))
 def test_manager_frontdoors_reject_a_stale_interpreter_with_the_same_package_version(

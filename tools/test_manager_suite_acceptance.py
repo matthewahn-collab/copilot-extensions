@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from types import SimpleNamespace
+from typing import Any, Iterator, cast
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -18,11 +19,13 @@ import yaml
 _SPEC = importlib.util.spec_from_file_location(
     "manager_suite_acceptance", Path(__file__).with_name("run-manager-suite-acceptance.py"),
 )
+assert _SPEC is not None and _SPEC.loader is not None
 runner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(runner)
 _ADAPTER_SPEC = importlib.util.spec_from_file_location(
     "manager_adapter_acceptance", Path(__file__).with_name("run-manager-runtime-acceptance.py"),
 )
+assert _ADAPTER_SPEC is not None and _ADAPTER_SPEC.loader is not None
 adapter_runner = importlib.util.module_from_spec(_ADAPTER_SPEC)
 _ADAPTER_SPEC.loader.exec_module(adapter_runner)
 
@@ -30,31 +33,34 @@ _ADAPTER_SPEC.loader.exec_module(adapter_runner)
 @pytest.mark.parametrize("outcome", (
     "success", "controls", "constructed", "legacy", "finish", "assertions", "exception", "launch",
 ))
-def test_runtime_inputs_overlap_construction_and_settle_before_consumers(tmp_path, monkeypatch, outcome):
-    calls = []
-    children = []
+def test_runtime_inputs_overlap_construction_and_settle_before_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    calls: list[str] = []
 
     class Controls:
-        returncode = None
+        returncode: int | None = None
 
-        def __init__(self, label):
+        def __init__(self, label: str) -> None:
             self.label = label
             self.settled = False
 
-        def wait(self, **kwargs):
+        def wait(self, **kwargs: Any) -> int:
             calls.append(("settle:" if kwargs else "wait:") + self.label)
             self.returncode = int(outcome == self.label)
             self.settled = True
             return self.returncode
 
-        def poll(self):
+        def poll(self) -> int | None:
             return self.returncode
 
-        def terminate(self):
+        def terminate(self) -> None:
             calls.append("terminate:" + self.label)
             self.returncode = -1
 
-    def launch(command, **kwargs):
+    children: list[Controls] = []
+
+    def launch(command: list[str], **kwargs: Any) -> Controls:
         assert kwargs["stdout"] is sys.stdout and kwargs["stderr"] is sys.stderr
         if "--prepare-step" in command:
             label = command[-1]
@@ -72,7 +78,7 @@ def test_runtime_inputs_overlap_construction_and_settle_before_consumers(tmp_pat
         children.append(child)
         return child
 
-    def run(command, **kwargs):
+    def run(command: list[str], **kwargs: Any) -> SimpleNamespace:
         assert kwargs["stdout"] is sys.stdout and kwargs["stderr"] is sys.stderr
         if "--prepare" in command:
             assert calls[:5] == [
@@ -102,7 +108,7 @@ def test_runtime_inputs_overlap_construction_and_settle_before_consumers(tmp_pat
     assert ("finish" in calls) is (outcome not in {"constructed", "legacy", "launch"})
 
 
-def _adapter_report(path, fault=None):
+def _adapter_report(path: Path, fault: str | None = None) -> None:
     root = ET.Element("testsuite")
     for node in adapter_runner._application_adapter_nodes():
         ET.SubElement(root, "testcase", {
@@ -112,7 +118,7 @@ def _adapter_report(path, fault=None):
     if fault == "missing":
         root.remove(root[-1])
     elif fault == "duplicate":
-        root[-1].set("name", root[0].get("name"))
+        root[-1].set("name", root[0].attrib["name"])
     elif fault == "foreign":
         root[-1].set("classname", "unrelated")
     elif fault:
@@ -121,13 +127,17 @@ def _adapter_report(path, fault=None):
 
 
 @pytest.mark.parametrize("fault", [None, "missing", "duplicate", "foreign", "skipped", "failure", "error"])
-def test_adapter_acceptance_requires_every_unique_successful_phase(tmp_path, fault):
+def test_adapter_acceptance_requires_every_unique_successful_phase(
+    tmp_path: Path, fault: str | None,
+) -> None:
     report = tmp_path / "report.xml"
     _adapter_report(report, fault)
     assert adapter_runner._application_adapter_complete(report) is (fault is None)
 
 
-def test_adapter_acceptance_never_reuses_previous_reports(tmp_path, monkeypatch):
+def test_adapter_acceptance_never_reuses_previous_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     report = tmp_path / "application-adapter-result.json"
     report.write_text('{"complete":true}')
     monkeypatch.setattr(adapter_runner, "acquire", lambda *args: pytest.fail("stale acceptance"))
@@ -137,14 +147,16 @@ def test_adapter_acceptance_never_reuses_previous_reports(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("outcome", ["complete", "partial", "exception", "cleanup-overrun"])
-def test_adapter_group_retains_one_bound_and_cleans_up_on_every_outcome(tmp_path, monkeypatch, outcome):
+def test_adapter_group_retains_one_bound_and_cleans_up_on_every_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
     root = tmp_path / "evidence"
     root.mkdir()
     venv = tmp_path / "venvs" / "agent-worktrees"
     python = venv / ("Scripts/python.exe" if adapter_runner.os.name == "nt" else "bin/python")
     python.parent.mkdir(parents=True)
     python.touch()
-    settled = []
+    settled: list[str] = []
     clock = [0.0]
     monkeypatch.setattr(adapter_runner, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     monkeypatch.setattr(adapter_runner, "acquire", lambda *args: SimpleNamespace(
@@ -152,7 +164,7 @@ def test_adapter_group_retains_one_bound_and_cleans_up_on_every_outcome(tmp_path
     ))
 
     @contextmanager
-    def sandbox(**kwargs):
+    def sandbox(**kwargs: Any) -> Iterator[Path]:
         assert kwargs["dir"] == adapter_runner.REPO
         private = root / "sandbox"
         private.mkdir()
@@ -163,7 +175,7 @@ def test_adapter_group_retains_one_bound_and_cleans_up_on_every_outcome(tmp_path
             if outcome == "cleanup-overrun":
                 clock[0] = 301.0
 
-    def execute(command, *, limits, **kwargs):
+    def execute(command: list[str], *, limits: Any, **kwargs: Any) -> int:
         assert 0 < limits.wall_seconds <= 300
         assert "--timeout=30" in command
         nodes = adapter_runner._application_adapter_nodes()
@@ -184,10 +196,13 @@ def test_adapter_group_retains_one_bound_and_cleans_up_on_every_outcome(tmp_path
     assert result["complete"] is (outcome == "complete")
 
 
-def test_adapter_later_phase_refuses_before_native_work(tmp_path, monkeypatch):
+def test_adapter_later_phase_refuses_before_native_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spec = importlib.util.spec_from_file_location(
         "application_adapter_partial_control", Path(__file__).with_name("test_application_adapter_journey.py"),
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     state = SimpleNamespace(variant="plugin", directory=tmp_path, completed=[])
@@ -200,7 +215,7 @@ def test_adapter_later_phase_refuses_before_native_work(tmp_path, monkeypatch):
 def test_native_stage_failure_always_settles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: str | None,
 ) -> None:
-    calls = []
+    calls: list[str] = []
 
     def run(argv: list[str], *, timeout: float) -> int:
         stage = next((name for name in ("prepare", "exercise", "settle")
@@ -211,10 +226,11 @@ def test_native_stage_failure_always_settles(
     monkeypatch.setattr(runner, "_run", run)
     monkeypatch.setenv("MANAGER_SUITE_ACCEPTANCE_DATA", "previous-owner")
     assert runner.qualify(tmp_path, "repair", Path(sys.executable)) == int(failed is not None)
-    assert calls == {
+    expected_calls: dict[str | None, list[str]] = {
         "prepare": ["prepare", "settle"],
         "exercise": ["prepare", "exercise", "settle"],
-    }.get(failed, ["prepare", "exercise", "assertions", "settle"])
+    }
+    assert calls == expected_calls.get(failed, ["prepare", "exercise", "assertions", "settle"])
     assert runner.os.environ["MANAGER_SUITE_ACCEPTANCE_DATA"] == "previous-owner"
     report = json.loads((tmp_path / "repair-runner.json").read_text(encoding="utf-8"))
     assert report["stages"]["settle"] == 0
@@ -223,7 +239,7 @@ def test_native_stage_failure_always_settles(
 def test_preparation_timeout_still_settles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = []
+    calls: list[str] = []
 
     def run(argv: list[str], *, timeout: float) -> int:
         calls.append("settle" if "--settle" in argv else "prepare")
@@ -239,7 +255,7 @@ def test_preparation_timeout_still_settles(
 def test_serial_baseline_preparation_can_finish_before_its_outer_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = []
+    calls: list[str] = []
 
     def run(argv: list[str], *, timeout: float) -> int:
         stage = next((name for name in ("prepare", "exercise", "settle")
@@ -281,6 +297,7 @@ def test_process_observer_stops_and_retains_evidence_on_every_body_outcome(
     report = tmp_path / "repair-process-trace.json"
 
     def run(argv: list[str], *, timeout: float) -> int:
+        assert argv[0] == "controlled-pwsh"
         assert argv[-1] == "controlled-observer"
         ready.write_text("ready", encoding="utf-8")
         deadline = time.monotonic() + 5
@@ -290,6 +307,9 @@ def test_process_observer_stops_and_retains_evidence_on_every_body_outcome(
         report.write_text('{"stop_observed":true}', encoding="utf-8")
         return 0
 
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: (
+        "controlled-pwsh" if executable == "pwsh" else None
+    ))
     monkeypatch.setattr(runner, "_run", run)
     with pytest.raises(ValueError, match="body") if body_error else nullcontext():
         with runner._observe_processes(tmp_path, "repair", lambda *args: "controlled-observer"):
@@ -303,11 +323,29 @@ def test_process_observer_stops_and_retains_evidence_on_every_body_outcome(
 def test_process_observer_failure_cannot_enter_qualification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: (
+        "controlled-pwsh" if executable == "pwsh" else None
+    ))
     monkeypatch.setattr(runner, "_run", lambda *args, **kwargs: 3)
     with pytest.raises(RuntimeError, match="observer"):
         with runner._observe_processes(tmp_path, "normal", lambda *args: "controlled-observer"):
             pytest.fail("Failed process observation cannot qualify a native run")
     assert (tmp_path / "normal-process-trace.stop").exists()
+
+
+def test_process_observer_missing_executable_refuses_before_any_observer_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: None)
+    monkeypatch.setattr(runner, "_run", lambda *args, **kwargs: pytest.fail(
+        "Missing PowerShell must refuse before starting a process",
+    ))
+    with pytest.raises(RuntimeError, match="requires pwsh"):
+        with runner._observe_processes(tmp_path, "normal", lambda *args: pytest.fail(
+            "Missing PowerShell must refuse before constructing the observer",
+        )):
+            pytest.fail("Missing PowerShell cannot qualify a native run")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_process_observer_report_is_retained_by_the_actual_native_job() -> None:
@@ -332,9 +370,9 @@ def test_isolated_stage_diagnostics_use_explicit_utf8(
         if "--prepare" not in argv:
             return 0
         prefix = argv[:argv.index(str(runner.FIXTURE))]
-        return execute([
+        return cast(int, execute([
             *prefix, "-c", "import sys; assert sys.flags.utf8_mode == 1; print(chr(0x2014))",
-        ], timeout=30)
+        ], timeout=30))
 
     monkeypatch.setattr(runner, "_run", run)
     assert runner.qualify(tmp_path, "normal", Path(sys.executable)) == 0

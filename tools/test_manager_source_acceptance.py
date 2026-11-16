@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import runpy
 import subprocess
@@ -11,6 +13,81 @@ from typing import Any
 import pytest
 
 RUNNER = Path(__file__).with_name("run-manager-suite-acceptance.py")
+
+
+@pytest.mark.parametrize("outcome", ("settled", "unsettled", "copy-failure"))
+def test_source_owner_copies_evidence_and_preserves_unsettled_private_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    runner = runpy.run_path(str(RUNNER))
+    owner = runner["_qualify_source"]
+    workspace = tmp_path / "ce-ms-control"
+    workspace.mkdir()
+    report_root = tmp_path / "reports"
+    report_root.mkdir()
+
+    def allocate(*, prefix: str, dir: Path) -> str:
+        assert prefix == "ce-ms-" and dir == Path.home()
+        return str(workspace)
+
+    @contextmanager
+    def observe(
+        root: Path, mode: str, script: Callable[[Path, Path, Path, Path], str], *, home: Path,
+    ) -> Iterator[None]:
+        assert root == report_root and mode == "source"
+        assert home == workspace / "source" / "h"
+        yield
+
+    def qualify(
+        root: Path, mode: str, python: Path, *, main_commit: str, dev_commit: str, execution_root: Path,
+    ) -> int:
+        assert root == report_root and execution_root == workspace
+        assert (main_commit, dev_commit) == ("a" * 40, "b" * 40)
+        case = execution_root / "source"
+        case.mkdir()
+        (case / "setup.json").write_text('{"actual_source":"retained"}', encoding="utf-8")
+        (root / "source-runner.json").write_text(
+            json.dumps({"stages": {"settle": int(outcome == "unsettled")}, "errors": []}), encoding="utf-8",
+        )
+        return int(outcome == "unsettled")
+
+    monkeypatch.setattr(runner["tempfile"], "mkdtemp", allocate)
+    monkeypatch.setitem(owner.__globals__, "_observe_processes", observe)
+    monkeypatch.setitem(owner.__globals__, "qualify", qualify)
+    if outcome == "copy-failure":
+        def copy(*args: Any, **options: Any) -> None:
+            raise OSError("controlled evidence copy failure")
+        monkeypatch.setattr(runner["shutil"], "copy2", copy)
+    with pytest.raises(OSError, match="controlled evidence") if outcome == "copy-failure" else nullcontext():
+        code = owner(report_root, Path(sys.executable), "a" * 40, "b" * 40, lambda *args: "")
+        assert code == int(outcome == "unsettled")
+    report = json.loads((report_root / "source-runner.json").read_text(encoding="utf-8"))
+    assert workspace.exists() is (outcome != "settled")
+    if outcome == "settled":
+        assert json.loads((report_root / "source" / "setup.json").read_text())["actual_source"] == "retained"
+    else:
+        assert report["retained_private_root"] == str(workspace)
+
+
+def test_source_stages_use_the_private_execution_root_and_public_report_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = runpy.run_path(str(RUNNER))
+    owner = runner["qualify"]
+    workspace = tmp_path / "private"
+
+    def run(argv: list[str], *, timeout: float) -> int:
+        stage = next((name for name in ("prepare", "exercise", "settle") if "--" + name in argv), None)
+        if stage:
+            assert argv[argv.index("--" + stage) + 1] == str(workspace)
+        else:
+            assert runner["os"].environ["MANAGER_SUITE_ACCEPTANCE_DATA"] == str(workspace)
+        return 0
+
+    monkeypatch.setitem(owner.__globals__, "_run", run)
+    assert owner(tmp_path, "source", Path(sys.executable), execution_root=workspace) == 0
+    assert (tmp_path / "source-runner.json").is_file()
+    assert not workspace.exists()
 
 
 def test_fresh_interpreter_bootstraps_the_runner_without_installed_packages(tmp_path: Path) -> None:

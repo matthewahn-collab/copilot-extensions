@@ -342,6 +342,25 @@ package versions. Their original runner budgets remain unchanged. The earlier
 timed-out verification was not credited; neither these controls nor review
 corrections establish the still-pending hosted consumer result.
 
+The [second hosted attempt](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43784740185)
+selected Main `0397ca52d7af4606273724a1d0aea7d9a0371bb7` and merged Dev
+`f1fa463ccacde3f29d6a4e526d83779301a5b0bd`. It failed before application
+installation because the checkout's ancestor ownership did not meet the
+existing producer's private-directory contract; settlement passed. Move only
+the disposable source case into one compact private home allocation through the
+same runner, retaining diagnostics under the requested checkout root and
+deleting the private allocation only after confirmed settlement. Unknown
+settlement or evidence/cleanup failure retains its exact path. No ancestor ACL,
+producer permission check, stage deadline or source custodian changes.
+
+Further review also identified PowerShell-dependent observer mocks and a
+missing tools path in the isolated transport process. Explicit discovery stubs,
+the real missing-executable control and an actual fresh isolated transport
+process now cover those boundaries. Forty-nine runner tests, eleven source
+controls and seven-file Linux/Windows strict typing pass. These are preparation
+and test-owner corrections; another exact-head hosted attempt must still prove
+the actual consumer before any qualification credit.
+
 ### 2026-11-15 - Physical application environment prerequisite
 
 #12693 merged as `14fa6069e6da8f2414491630b545a52d39db6d31` after
