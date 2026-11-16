@@ -37,6 +37,7 @@ on:
           - bridge-http52-capture
           - bridge-binding
           - vault-activation
+          - vault-cache-diagnostic
           - dispatch-binding
           - dispatch-publication
           - dispatch-maintenance
@@ -445,7 +446,7 @@ jobs:
       - name: Diagnose native cache policy on failure
         if: failure() && runner.os == 'Windows'
         shell: python
-        run: |
+        run: &vault-cache-diagnostic-program |
           import os
           from pathlib import Path
           import shutil
@@ -454,6 +455,14 @@ jobs:
           import tempfile
           import venv
 
+          sys.stdout.reconfigure(encoding="utf-8")
+          sys.stderr.reconfigure(encoding="utf-8")
+          source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert source == os.environ["GITHUB_SHA"]
+          requested = os.environ.get("REQUESTED_SOURCE_SHA")
+          if requested:
+              assert source == requested
+          print(f"diagnostic-only=true; source={source}; native-platform={sys.platform}", flush=True)
           sys.path.insert(0, str(Path.cwd() / "libs/agent-procutil/src"))
           from agent_procutil import python_cache_permissions
           import agent_procutil
@@ -467,7 +476,7 @@ jobs:
               else:
                   print(f"cache-ancestor={path}; protection=accepted")
           with tempfile.TemporaryDirectory(prefix="vault-cache-diagnostic-") as directory:
-              root = Path(directory).resolve() / "vault home"
+              root = Path(directory).resolve() / "vault home-\u03bb"
               slot = root / "versions" / "1.0.0"
               venv.EnvBuilder(with_pip=False).create(slot)
               site = slot / "Lib" / "site-packages"
@@ -492,11 +501,18 @@ jobs:
                   "except Exception:\n"
                   " traceback.print_exc()\n"
               )
-              subprocess.run(
+              result = subprocess.run(
                   [str(slot / "Scripts" / "python.exe"), "-I", "-B", "-c", probe, str(root)],
-                  env={**os.environ, "LOCALAPPDATA": str(root.parent / "user-cache")},
-                  check=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
+                  env={
+                      **os.environ, "LOCALAPPDATA": str(root.parent / "user-cache"),
+                      "PYTHONIOENCODING": "utf-8",
+                  },
+                  capture_output=True, text=True, encoding="utf-8",
+                  check=False, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
               )
+              print(result.stdout, end="", flush=True)
+              print(result.stderr, end="", file=sys.stderr, flush=True)
+              result.check_returncode()
 
   vault-activation-windows:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-activation'
@@ -504,6 +520,24 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps: *vault-activation-steps
+  vault-cache-diagnostic-windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-cache-diagnostic'
+    name: Vault cache diagnostic only (not native acceptance)
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Diagnose sealed-cache policy without the activation portfolio
+        shell: python
+        run: *vault-cache-diagnostic-program
   related-knowledge-linux:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'related-knowledge'
     name: Bound knowledge related readers (Linux)
