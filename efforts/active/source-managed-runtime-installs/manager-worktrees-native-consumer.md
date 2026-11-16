@@ -117,7 +117,7 @@ VQ1-VQ6 remain open.
   review and required CI. Preserve the existing authentic-source implementation
   branch and its native hold. Plan approval does not qualify that branch,
   authorize a workflow dispatch or publish the protected controller.
-- [ ] PF2 - Add exactly one typed packet, `manager-worktrees-source`, to the
+- [x] PF2 - Add exactly one typed packet, `manager-worktrees-source`, to the
   existing `windows-qualification` client, protected contract/worker and support
   declaration. Bind the candidate SHA separately from full immutable Main seed
   and merged-Dev runtime SHAs. Admit those two extra source inputs only for this
@@ -125,7 +125,7 @@ VQ1-VQ6 remain open.
   Bind all three identities into request, transport, result and local receipt.
   Check candidate fixture/runner files are regular source entries, and preserve
   the current original/rerun-owner and protected-default-branch checks.
-- [ ] PF3 - Compose the existing `run-manager-suite-acceptance.py --mode source`
+- [x] PF3 - Compose the existing `run-manager-suite-acceptance.py --mode source`
   owner, not the generic plugin-test command or a new fixture. Forward the two
   frozen runtime inputs; retain actual donor provenance, real complete
   application construction, the private fixture allocation and fixture-owned
@@ -141,7 +141,7 @@ VQ1-VQ6 remain open.
   other environment scrubbing and feed-policy checks; do not copy credentials,
   configuration or host state into the fixture. Generic tools/plugin requests
   and the candidate-branch workflow remain without feed access.
-- [ ] PF5 - Reuse the protected worker's redaction and independent always-run
+- [x] PF5 - Reuse the protected worker's redaction and independent always-run
   sanitizer for this packet, including interrupted execution. Export only
   bounded named runner, preparation, command, settlement, observer, frontdoor
   and assertion evidence through its current artifact owner. Remove URLs and
@@ -149,7 +149,7 @@ VQ1-VQ6 remain open.
   omit unsafe or oversized evidence and fail qualification rather than upload
   unsanitized output. No private Git repository, home, build tree or environment
   dump becomes an artifact.
-- [ ] PF6 - Preserve the suite's existing limits: preparation 1800 seconds,
+- [x] PF6 - Preserve the suite's existing limits: preparation 1800 seconds,
   exercise 900, assertions 300, settlement 90, observer 3320 and hosted job
   allocation 60 minutes. The protected workflow currently allocates 40 minutes;
   select 60 only for this packet and leave all existing packet allocations
@@ -168,18 +168,18 @@ VQ1-VQ6 remain open.
 
 ### Adapter validation and execution hold
 
-- [ ] VF1 - Focused contract/client/worker tests reject unsupported control,
+- [x] VF1 - Focused contract/client/worker tests reject unsupported control,
   owner/rerun mismatch, incorrect input identities, arbitrary command/selector
   fields and packet confusion. Existing packet behavior and prerequisite pins
   remain unchanged; generic requests cannot inherit the feed.
-- [ ] VF2 - A lightweight real subprocess test exercises the actual environment
+- [x] VF2 - A lightweight real subprocess test exercises the actual environment
   boundary under fake HOME and UV scrubbing with a nonsecret example HTTPS
   index. A genuine constructor prerequisite failure remains failure; no mock
   may stand in for the hosted application's construction or ordinary update.
-- [ ] VF3 - Sanitizer tests cover the packet's JSONL and copied evidence, URL
+- [x] VF3 - Sanitizer tests cover the packet's JSONL and copied evidence, URL
   and bare-hostname leakage, timeout/interruption, symlink/oversize omission and
   the independent post-worker path. Artifact selection cannot bypass sanitation.
-- [ ] VF4 - Validate one-packet command construction, original aggregate/stage
+- [x] VF4 - Validate one-packet command construction, original aggregate/stage
   deadlines, exact result case and stage identities, negative/skipped/empty
   outcomes and required settlement. Retain the current runner's cleanup and
   read-only Git-object regression controls.
@@ -253,6 +253,26 @@ The parent remains Active until its complete Plan and Validation Plan close;
 finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
+
+### 2026-11-16 - Protected adapter merged, native consumer still held
+
+#12809 merged as `403697dc37e5762b3314cb0700d0c5a56841ac9e` after
+current-head review reported no open issues and all required checks passed.
+This closes the adapter's typed-packet, composition, sanitizer and budget
+implementation items, plus their focused admission and sanitizer controls.
+All 418 packet/client/lifetime controls and strict Linux/Windows typing pass.
+The fixture branch now includes that reviewed adapter; its source implementation
+is unchanged by the pull-forward.
+
+After that pull-forward, all 19 contained source controls and 222 runner/workflow
+controls pass, along with strict Linux/Windows typing for the seven fixture
+Python files. These include the real scrubbed subprocess feed boundary and
+runner stage/settlement controls; they close VF2/VF4, not the hosted consumer.
+
+The protected Main controller and published support still need containing-release
+verification before a request can be admitted. PF4, PF7 and the hosted VF5 gate
+remain open, alongside Q2-Q5/VQ1-VQ6 and the complete parent Goal.
+No new native attempt, productive runtime update or consumer pass is claimed.
 
 ### 2026-11-16 - Protected-owner adapter plan reviewed
 
