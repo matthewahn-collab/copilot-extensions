@@ -60,6 +60,40 @@ checklists, delivered credit, independent objectives and reasons for consolidati
 No item is newly passed, no tracker is closed, no custody changes and no native
 or installed operation is authorized by this proposal. The effort remains Active.
 
+## Completion charter
+
+**Kind:** completion.
+
+**Root goal:** the complete outcome in [Goal](#goal), including its construction,
+managed-Python, lifetime, cutoff and finite-scope amendments. The addressed
+installation reaches its required incoming ready/current state while preserving
+configuration, data, sessions and source custody; completing a fixture or PR is
+not this end state.
+
+**Root source:** the existing reviewed Goal and [Request](#request). Original
+operator wording remains verbatim in Request and its linked refinement records;
+this charter does not replace, paraphrase or expand those instructions.
+
+**Acceptance:** resolve the direct [Plan](#plan) and global
+[Validation Plan](#validation-plan) against attributable source, native,
+containing-release and authorized installed evidence. Preserve independently
+owned adopter conditions and every current approval, hold and effect boundary.
+Do not recursively revive retired historical checklists.
+
+**Finalization criterion:** mark the effort Done only after every direct Plan
+and global Validation item is resolved or explicitly transferred to a named
+tracked objective. Record the actual accepted outcomes, settle owned obligations
+and use the normal worktree finalization flow; a merged child is insufficient.
+
+**Now:** diagnose the authentic Manager/Worktrees fixture's cold source-preparation
+process-utility import failure. Its latest hosted attempt passed source admission
+and governed-feed validation, failed preparation before application installation,
+and passed settlement. No native consumer or installed-adoption pass is inferred.
+
+**Return:** after this bounded fixture slice, select the next unmet criterion
+from the complete Plan and global Validation Plan, retaining the addressed-suite,
+staging-barrier, managed-Python, lifetime and authorized-adoption obligations.
+
 ## Guiding Intent
 
 The [foreground-update/service-startup amendment](update-service-lifetimes.md)
