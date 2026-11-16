@@ -87,10 +87,10 @@ unchanged. No feed value or credentials were requested or received.
 - #12176 and the subsequent #12546 constructor correction are existing inputs.
   #10570 remains the separately owned prepared-Worktrees draft; qualification
   does not copy, pre-patch or supersede it.
-- #12852 tracks the current Manager constructor's refusal of equivalent Windows
-  paths. Its existing contributor-owned repair retains its draft/native hold.
-  Do not repeat this known construction failure or copy the repair into this
-  fixture; qualify released repaired inputs after that owner's gates clear.
+- #12852 tracks the Manager constructor's refusal of equivalent Windows paths.
+  Its contributor-owned repair merged in #12861. A containing Main release
+  still gates this fixture's fresh baseline construction; do not repeat the
+  known failure against an unrepaired released input or copy the repair here.
 - The current parent requires fresh/existing construction parity, a complete
   required-set staging barrier, and foreground-update/independent-service
   lifetime semantics. This slice cannot credit those outcomes from old
@@ -200,14 +200,14 @@ support declaration available. The approved extension does not expose a feed
 to candidate workflows or authorize a production installation. If the owner
 cannot represent this packet, its original bounds or independently sanitized
 evidence, record the exact missing boundary rather than bypass it.
-The controller publication condition is now satisfied; the independent #12852
-constructor dependency still blocks the next native attempt.
+The controller publication condition is satisfied. The #12852 constructor repair
+has merged, but its containing Main release still blocks the next native attempt.
 
 The protected-owner adapter plan cleared review in #12801. Its PF/VF checks
 retain the original case, stage, cleanup and evidence bounds. Implementation
 review and protected-controller publication are complete, but the constructor
-dependency above still blocks another native attempt. No feed value is exposed
-to this candidate workflow, and native qualification remains unobserved.
+release dependency above still blocks another native attempt. No feed value is
+exposed to this candidate workflow, and native qualification remains unobserved.
 
 ## Plan - agent-recommended
 
@@ -259,6 +259,26 @@ The parent remains Active until its complete Plan and Validation Plan close;
 finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
+
+### 2026-11-16 - Constructor repair merged, containing release pending
+
+The existing contributor-owned #12861 merged as
+`9670af6f60ac4244c9ba3cefcf7c27b600ed821b` after its author hold was
+cleared through its own acceptance flow. This fixture neither copied the
+repair nor weakened source admission to qualify an unmerged runtime input.
+Its branch now includes merged Dev, with all eight fixture/runner/workflow
+files unchanged from the pre-sync backup.
+
+After this refresh, all 19 contained source controls and 222 runner/workflow
+controls pass. All seven fixture Python files pass whole-file strict checks
+for Linux and Windows. Missing bundled checker stubs were restored from the
+existing hash-locked tooling requirements; no dependency or source policy changed.
+
+The repair's Dev CI passes. The then-current protected Main remains
+`793a56b6c93638c7cd1cedf47df55a68d2580e9d` and still contains the three
+faulty lexical checks. Containing release verification therefore remains a
+real native-execution gate. No fourth native attempt or consumer pass is
+claimed, and PF7/VF5, Q2-Q5/VQ1-VQ6 and the parent Goal remain open.
 
 ### 2026-11-16 - Protected controller released, constructor dependency retained
 
