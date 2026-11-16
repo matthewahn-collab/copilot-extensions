@@ -63,6 +63,9 @@ def owners(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Owners:
         "AGENT_CONFIGURATION_CONTEXT",
         "COPILOT_EXTENSIONS_CONTEXT",
         "AGENT_RT_ROOT",
+        "_AGENT_VAULT_FIRST_USE_ROOT",
+        "COPILOT_PLUGIN_INSTALL_STAGED",
+        "COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(config, "_ext_config", lambda _cwd: {})
@@ -322,6 +325,37 @@ def test_malformed_native_json_keeps_tolerant_context_resolution(
     assert config.resolve_context(strict=False).vault_name is None
     with pytest.raises(RuntimeError, match="invalid configuration"):
         config.resolve_context(strict=True)
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_first_use_metadata_requires_staging_and_keeps_explicit_selection(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+    staged: bool,
+) -> None:
+    _, base, project, _ = owners
+    monkeypatch.setattr(configuration, "_legacy_report", lambda root: None)
+    monkeypatch.setenv("_AGENT_VAULT_FIRST_USE_ROOT", str(project))
+    monkeypatch.setenv("COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT", str(project))
+    if staged:
+        monkeypatch.setenv("COPILOT_PLUGIN_INSTALL_STAGED", "1")
+    assert config.configuration_root() == str(project if staged else base)
+    assert config.resolve_context(strict=True).vault_name == ("second" if staged else "first")
+
+
+def test_invalid_staged_selection_refuses_but_explicit_cli_still_wins(
+    owners: Owners,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, _, project, _ = owners
+    monkeypatch.setattr(configuration, "_legacy_report", lambda root: None)
+    monkeypatch.setenv("_AGENT_VAULT_FIRST_USE_ROOT", str(project))
+    monkeypatch.setenv("COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT", str(home))
+    monkeypatch.setenv("COPILOT_PLUGIN_INSTALL_STAGED", "1")
+    with pytest.raises(ValueError, match="staged project"):
+        config.resolve_context(strict=True)
+    with use_configuration_root(str(project)):
+        assert config.resolve_context(strict=True).vault_name == "second"
 
 
 @pytest.mark.parametrize("selection", ["explicit", "caller", "resident"])

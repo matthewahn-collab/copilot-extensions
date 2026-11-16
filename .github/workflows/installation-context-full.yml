@@ -431,6 +431,7 @@ jobs:
           --test-file tests/test_runtime_activation.py
           --test-file tests/test_install_snapshot_ps1.py
           --test-file tests/test_service_launch.py
+          --test-file tests/test_native_default_uninstall.py
           --junit-dir vault-configuration-consumers-junit
       - name: Retain Vault configuration consumer results
         if: always()
@@ -442,11 +443,14 @@ jobs:
       - name: Qualify accepted activation context under a different queue worker
         run: >-
           python tools/run-plugin-tests.py update-driver
-          --test-file tests/test_first_use.py -k activation_selectors
+          --test-file tests/test_first_use.py
+          --test-file tests/test_vault_selection_context.py
+          -k "activation_selectors or first_use_root_survives"
       - name: Diagnose native cache policy on failure
         if: failure() && runner.os == 'Windows'
         shell: python
         run: &vault-cache-diagnostic-program |
+          import json
           import os
           from pathlib import Path
           import shutil
@@ -481,6 +485,7 @@ jobs:
               venv.EnvBuilder(with_pip=False).create(slot)
               site = slot / "Lib" / "site-packages"
               shutil.copytree(Path(agent_procutil.__file__).parent, site / "agent_procutil")
+              (site / "diagnostic_cache_import.py").write_text("VALUE = 42\n", encoding="utf-8")
               (slot / ".install-complete.json").write_text(
                   '{"version":"1.0.0","completed_at":"fixture","pid":0,"payload_hash":"'
                   + "a" * 64 + '"}', encoding="utf-8",
@@ -513,6 +518,30 @@ jobs:
               print(result.stdout, end="", flush=True)
               print(result.stderr, end="", file=sys.stderr, flush=True)
               result.check_returncode()
+              policy = json.loads(result.stdout.splitlines()[0])["policy"]
+              for phase, arguments in (
+                  ("cached-import", [
+                      str(slot / "Scripts" / "python.exe"), "-I", *policy, "-c",
+                      "import json,sys,diagnostic_cache_import as module; "
+                      "print(json.dumps({'cached':module.__cached__,"
+                      "'prefix':sys.pycache_prefix,'readonly':sys.dont_write_bytecode}))",
+                  ]),
+                  ("reuse-after-import", [
+                      str(slot / "Scripts" / "python.exe"), "-I", "-B", "-c", probe, str(root),
+                  ]),
+              ):
+                  print("diagnostic-phase=" + phase, flush=True)
+                  repeated = subprocess.run(
+                      arguments, env={
+                          **os.environ, "LOCALAPPDATA": str(root.parent / "user-cache"),
+                          "PYTHONIOENCODING": "utf-8",
+                      },
+                      capture_output=True, text=True, encoding="utf-8", check=False,
+                      timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
+                  )
+                  print(repeated.stdout, end="", flush=True)
+                  print(repeated.stderr, end="", file=sys.stderr, flush=True)
+                  repeated.check_returncode()
 
   vault-activation-windows:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-activation'

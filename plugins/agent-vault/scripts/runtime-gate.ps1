@@ -401,15 +401,22 @@ if ($nativeSelector) {
     "[agent-vault] submitting first-use provisioning to the installation driver: $executionRoot"
 )
 $previousEap = $ErrorActionPreference
+$previousFirstUseRoot = [Environment]::GetEnvironmentVariable('_AGENT_VAULT_FIRST_USE_ROOT')
 $ErrorActionPreference = 'Continue'
 try {
     $nativeShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Set-RuntimeEnvironment -RuntimeRoot $runtimeRoot -Context $context `
         -InstallationId $installationId -ServiceSuffix $serviceSuffix
+    if ($hasConfigurationRoot) {
+        $env:_AGENT_VAULT_FIRST_USE_ROOT = $project
+    } else {
+        [Environment]::SetEnvironmentVariable('_AGENT_VAULT_FIRST_USE_ROOT', $null, 'Process')
+    }
     & $nativeShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $firstUse `
         -Root $executionRoot -Payload $payloadRoot -RuntimeRoot $runtimeRoot -Project $project -Wait
     $provisionCode = $LASTEXITCODE
 } finally {
+    [Environment]::SetEnvironmentVariable('_AGENT_VAULT_FIRST_USE_ROOT', $previousFirstUseRoot, 'Process')
     $ErrorActionPreference = $previousEap
 }
 if ($provisionCode -ne 0) { exit $provisionCode }

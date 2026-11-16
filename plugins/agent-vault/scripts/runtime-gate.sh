@@ -326,7 +326,14 @@ if [[ -n "$NATIVE_SELECTOR" ]]; then
 fi
 printf '[agent-vault] submitting first-use provisioning to the installation driver: %s\n' "$EXECUTION_ROOT" >&2
 apply_runtime_env "$RUNTIME_ROOT" "$CONTEXT" "$INSTALLATION_ID" "$SERVICE_SUFFIX"
-bash "$FIRST_USE" "$EXECUTION_ROOT" "$PAYLOAD_ROOT" "$RUNTIME_ROOT" "$PROJECT_ROOT" --wait || exit "$?"
+(
+    if [[ "$has_configuration_root" == true ]]; then
+        export _AGENT_VAULT_FIRST_USE_ROOT="$PROJECT_ROOT"
+    else
+        unset _AGENT_VAULT_FIRST_USE_ROOT
+    fi
+    bash "$FIRST_USE" "$EXECUTION_ROOT" "$PAYLOAD_ROOT" "$RUNTIME_ROOT" "$PROJECT_ROOT" --wait
+) || exit "$?"
 resolve_runtime
 if [[ -n "$AGENT_RT_PY" ]]; then
     run_runtime "$@"

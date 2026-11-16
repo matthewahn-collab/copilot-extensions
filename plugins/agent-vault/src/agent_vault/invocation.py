@@ -12,10 +12,28 @@ from pathlib import Path
 from typing import TypedDict
 
 _ROOT: ContextVar[str | None] = ContextVar("vault_configuration_root", default=None)
+FIRST_USE_ROOT_ENV = "_AGENT_VAULT_FIRST_USE_ROOT"
 
 
 def configuration_root(cwd: str | None = None) -> str | None:
-    return cwd if cwd is not None else _ROOT.get()
+    selected = cwd if cwd is not None else _ROOT.get()
+    if selected is not None:
+        return selected
+    if os.environ.get("COPILOT_PLUGIN_INSTALL_STAGED") != "1":
+        return None
+    retained = os.environ.get(FIRST_USE_ROOT_ENV)
+    if retained is None:
+        return None
+    project = os.environ.get("COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT")
+    path = Path(retained)
+    if (
+        not retained or any(ord(char) < 32 for char in retained)
+        or not path.is_absolute() or not path.is_dir()
+        or not project or not Path(project).is_absolute()
+        or path.resolve() != Path(project).resolve()
+    ):
+        raise ValueError("first-use configuration root does not match its staged project")
+    return str(path)
 
 
 @contextmanager

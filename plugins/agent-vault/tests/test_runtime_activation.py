@@ -188,13 +188,20 @@ def test_native_payload_configuration_root_keeps_caller_paths(tmp_path: Path, en
 
 
 @pytest.mark.parametrize("default_config", ['{"enabled":false}', '{"vaults":{}}'])
+@pytest.mark.parametrize("prepared", [False, True])
 def test_native_explicit_root_without_local_file_keeps_bound_knowledge(
-    tmp_path: Path, default_config: str,
+    tmp_path: Path, default_config: str, prepared: bool,
 ) -> None:
-    home, payload, runtime, _, _ = prepare_payload(tmp_path, "legacy")
+    if prepared:
+        home, payload, runtime, _, _ = prepare_payload(tmp_path, "legacy")
+        project = tmp_path / "project"
+        project.mkdir()
+    else:
+        home, payload, runtime, project, _, _ = _scoped_first_use_fixture(tmp_path)
+        (project / ".agent-vault.json").unlink()
     (tmp_path / ".agent-vault.json").unlink()
-    project, knowledge, default = (tmp_path / part for part in ("project", "knowledge", "default"))
-    for path in (project, knowledge, default):
+    knowledge, default = (tmp_path / part for part in ("knowledge", "default"))
+    for path in (knowledge, default):
         path.mkdir()
     (knowledge / ".agent-vault.json").write_text(
         '{"enabled":true,"group":"bound-group"}', encoding="utf-8",
@@ -221,15 +228,47 @@ def test_native_explicit_root_without_local_file_keeps_bound_knowledge(
         + f"    return {report!r}\n",
         encoding="utf-8",
     )
-    prepare_runtime(runtime, payload)
+    if prepared:
+        prepare_runtime(runtime, payload)
+    else:
+        driver = payload / "libs" / "update-driver" / "scripts"
+        reader = payload / "scripts" / "runtime-activation.py"
+        if os.name == "nt":
+            python = str(sys.executable).replace("'", "''")
+            selected_reader = str(reader).replace("'", "''")
+            (driver / "first-use.ps1").write_text(
+                "param($Root,$Payload,$RuntimeRoot,$Project,[switch]$Wait)\n"
+                "$env:COPILOT_PLUGIN_INSTALL_STAGED='1'\n"
+                "$env:COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT=$Project\n"
+                "Set-Location -LiteralPath $env:USERPROFILE\n"
+                f"& '{python}' -I -B '{selected_reader}' --cwd $Project --runtime-root $RuntimeRoot\n"
+                "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; exit 37\n",
+                encoding="utf-8",
+            )
+        else:
+            import shlex
+
+            (driver / "first-use.sh").write_text(
+                "#!/bin/sh\n"
+                "export COPILOT_PLUGIN_INSTALL_STAGED=1\n"
+                'export COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT="$4"\n'
+                'cd "$HOME" || exit 91\n'
+                f"{shlex.quote(sys.executable)} -I -B {shlex.quote(str(reader))} "
+                '--cwd "$4" --runtime-root "$3" || exit "$?"\nexit 37\n',
+                encoding="utf-8",
+            )
     env = _clean_env({
         "HOME": str(home), "USERPROFILE": str(home),
         "COPILOT_PLUGIN_ROOT": str(payload), "AGENT_VAULT_HOME": str(runtime),
         "AGENT_VAULT_CONFIG": str(native), "AGENT_VAULT_NO_SELFPROVISION": "1",
+        "_AGENT_WORKTREES_VAULT_RUNTIME_GUARD": "1",
     })
     result = invoke(payload, env, home, "--configuration-root", str(project), "which", "--json")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout)["group"] == "bound-group"
+    assert result.returncode == (0 if prepared else 37), result.stdout + result.stderr
+    if prepared:
+        assert json.loads(result.stdout)["group"] == "bound-group"
+    else:
+        assert json.loads(result.stdout)["state"] == "configured"
     assert not (project / ".agent-vault.json").exists()
     assert not (runtime / "run").exists()
 
@@ -279,6 +318,7 @@ def _scoped_first_use_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, P
             "param($Root,$Payload,$RuntimeRoot,$Project,[switch]$Wait)\n"
             "@{project=$Project; config=$env:AGENT_VAULT_CONFIG; "
             "no_self=$env:AGENT_VAULT_NO_SELFPROVISION; "
+            "selection=$env:_AGENT_VAULT_FIRST_USE_ROOT; "
             "guard=$env:_AGENT_WORKTREES_VAULT_RUNTIME_GUARD} | ConvertTo-Json -Compress | "
             f"Set-Content -Encoding UTF8 -LiteralPath '{destination}'\nexit 37\n",
             encoding="utf-8",
@@ -297,6 +337,7 @@ def _scoped_first_use_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, P
                 f"with open({str(receipt)!r},'w') as stream:\n"
                 " json.dump({'project':sys.argv[1], 'config':os.environ.get('AGENT_VAULT_CONFIG'), "
                 "'no_self':os.environ.get('AGENT_VAULT_NO_SELFPROVISION'), "
+                "'selection':os.environ.get('_AGENT_VAULT_FIRST_USE_ROOT'), "
                 "'guard':os.environ.get('_AGENT_WORKTREES_VAULT_RUNTIME_GUARD')},stream)\n"
                 "sys.exit(37)\n"
             )
@@ -320,6 +361,7 @@ def test_native_scoped_first_use_retains_discovery_and_native_file_separately(tm
     captured = json.loads(receipt.read_text(encoding="utf-8-sig"))
     assert captured["project"] == str(project)
     assert captured["config"] == str(home / "native.json")
+    assert captured["selection"] == str(project)
     assert not captured["no_self"] and not captured["guard"]
     assert not runtime.exists()
 

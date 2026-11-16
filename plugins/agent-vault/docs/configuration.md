@@ -52,6 +52,9 @@ Its file may contain only `enabled`, `vault` and `group`; named database records
 cache keys, service endpoints and protected runtime settings stay native.
 
 Selection provenance is retained through cold activation and resident launch.
+Accepted first-use requests also retain an explicit source across a different
+queue worker and installer staging; this transient operation metadata is not
+a machine default or a fabricated Worktrees configuration report.
 Explicit, resident and caller-file roots still resolve their qualified layers
 even when their path equals the configured default. Only an actual fallback
 uses the standalone-data restriction and bypasses the optional peer.
