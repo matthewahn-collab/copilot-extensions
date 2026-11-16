@@ -673,7 +673,6 @@
     },
     {
       "name": "repository-tools",
-      "requirements": "tools/typecheck-yaml-requirements.txt",
       "include": [
         "tools"
       ],
