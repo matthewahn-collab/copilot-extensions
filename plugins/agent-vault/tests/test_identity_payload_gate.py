@@ -12,6 +12,8 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
+from collections.abc import Mapping
 
 import pytest
 
@@ -22,20 +24,21 @@ PLUGIN = Path(__file__).resolve().parents[1]
 REPO = PLUGIN.parents[1]
 
 
-def load_module(path, name):
+def load_module(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def write_json(path, value):
+def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def prepare_payload(root, mode):
+def prepare_payload(root: Path, mode: str) -> tuple[Path, Path, Path, str, str]:
     write_json(root / ".agent-vault.json", {"enabled": True})
     home = root / "home"
     payload = home / ".copilot" / "installed-plugins" / "example" / "agent-vault"
@@ -90,7 +93,7 @@ def prepare_payload(root, mode):
     return home, payload, runtime, installation_id, context
 
 
-def prepare_runtime(runtime, payload):
+def prepare_runtime(runtime: Path, payload: Path) -> None:
     slot = runtime / "versions" / "fixture"
     subprocess.run(
         [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(slot)],
@@ -115,14 +118,16 @@ def prepare_runtime(runtime, payload):
     (runtime / "current-version").write_text("fixture\n", encoding="utf-8")
 
 
-def launcher(payload):
+def launcher(payload: Path) -> list[str]:
     if os.name == "nt":
         return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c",
                 str(payload / "bin" / "agent-vault.cmd")]
     return [str(payload / "bin" / "agent-vault")]
 
 
-def invoke(payload, env, cwd, *args):
+def invoke(
+    payload: Path, env: Mapping[str, str], cwd: Path, *args: str,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*launcher(payload), *args], env=env, cwd=cwd,
         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90,
@@ -133,7 +138,7 @@ def invoke(payload, env, cwd, *args):
 @pytest.mark.effect("process")
 @pytest.mark.parametrize("host", ["native", "pwsh"])
 @pytest.mark.parametrize("qualification", ["payload-missing", "runtime-missing", "qualified"])
-def test_installed_readiness_does_not_import_checkout_module(tmp_path, host, qualification):
+def test_installed_readiness_does_not_import_checkout_module(tmp_path: Path, host: str, qualification: str) -> None:
     from agent_procutil import no_window_kwargs
 
     if host == "pwsh" and os.name != "nt":
@@ -203,7 +208,7 @@ def test_installed_readiness_does_not_import_checkout_module(tmp_path, host, qua
     assert result.returncode == 1
 
 
-def test_shared_payload_pin_validator_rejects_foreign_cell_and_invalid_json(tmp_path):
+def test_shared_payload_pin_validator_rejects_foreign_cell_and_invalid_json(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     database = tmp_path / "fixture.kdbx"
     pin = json.dumps({
@@ -228,7 +233,7 @@ def test_shared_payload_pin_validator_rejects_foreign_cell_and_invalid_json(tmp_
     reason="opt-in native payload-launcher contract",
 )
 @pytest.mark.parametrize("mode", ["legacy", "namespaced"])
-def test_actual_payload_cache_only_reader_preserves_two_database_scopes(tmp_path, monkeypatch, mode):
+def test_actual_payload_cache_only_reader_preserves_two_database_scopes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     if os.name != "nt":
         pytest.importorskip("Cryptodome.Cipher.AES", reason="POSIX cache reads require the cache extra")
     home, payload, runtime, installation_id, context = prepare_payload(tmp_path, mode)
@@ -287,7 +292,7 @@ def test_actual_payload_cache_only_reader_preserves_two_database_scopes(tmp_path
     ("ssh-key", "prepare", "--entry", "SSH/node-a"),
     ("ssh-key", "install", "--entry", "SSH/node-a", "--directory", "unused"),
 ])
-def test_actual_first_touch_require_running_never_provisions(tmp_path, mode, command):
+def test_actual_first_touch_require_running_never_provisions(tmp_path: Path, mode: str, command: tuple[str, ...]) -> None:
     home, payload, runtime, _installation_id, context = prepare_payload(tmp_path, mode)
     env = {
         name: value for name, value in os.environ.items()
@@ -310,7 +315,7 @@ def test_actual_first_touch_require_running_never_provisions(tmp_path, mode, com
     reason="opt-in actual payload/KeePass proof",
 )
 @pytest.mark.parametrize("mode", ["legacy", "namespaced"])
-def test_actual_payload_live_setup_and_stopped_service_refusal(tmp_path, mode):
+def test_actual_payload_live_setup_and_stopped_service_refusal(tmp_path: Path, mode: str) -> None:
     live = load_module(PLUGIN / "tests" / "test_identity_key_keepass_live.py", "vault_gate_live")
     home, payload, runtime, installation_id, context = prepare_payload(tmp_path, mode)
     prepare_runtime(runtime, payload)

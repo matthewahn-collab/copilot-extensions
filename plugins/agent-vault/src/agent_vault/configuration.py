@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from collections.abc import Mapping
+from typing import cast
 
 from configuration_context import context_from_owner, delivered_context, read_owner_context, ready_owner_prefix
-from configuration_layers import ConfigurationError, compose, read_source
+from configuration_layers import Composition, ConfigurationError, Layer, compose, read_source
 
-from . import _peer_launch
+from . import _peer_launch as _peer_launch
 
 FIELDS = {"vault", "group", "enabled"}
 
@@ -41,7 +43,7 @@ def service_configuration_snapshot(cwd: str | None = None) -> dict[str, str]:
     return {"root": root, "config": path}
 
 
-def _legacy_report(root: Path) -> dict | None:
+def _legacy_report(root: Path) -> dict[str, object] | None:
     from .config import home_dir
 
     own_root = Path(os.environ.get("AGENT_RT_ROOT") or home_dir())
@@ -92,7 +94,9 @@ def _legacy_report(root: Path) -> dict | None:
     )
 
 
-def _checked_report(report, own):
+def _checked_report(
+    report: dict[str, object] | None, own: Mapping[str, str] | None,
+) -> dict[str, object] | None:
     if report is not None and own is not None and (
         context_from_owner(report)["installation_cell"] != str(own["cellRoot"])
     ):
@@ -100,7 +104,7 @@ def _checked_report(report, own):
     return report
 
 
-def owner_report(root: Path) -> dict | None:
+def owner_report(root: Path) -> dict[str, object] | None:
     from .config import home_dir
 
     own_root = Path(os.environ.get("AGENT_RT_ROOT") or home_dir())
@@ -142,7 +146,7 @@ def owner_report(root: Path) -> dict | None:
     ), own)
 
 
-def _ordinary(raw: dict) -> dict:
+def _ordinary(raw: Mapping[str, object]) -> dict[str, object]:
     from .config import _validate_config_data
 
     values = {key: value for key, value in raw.items() if key in FIELDS}
@@ -150,14 +154,17 @@ def _ordinary(raw: dict) -> dict:
     return values
 
 
-def compose_preferences(cwd, repo_data: dict, global_data: dict, ext_data: dict) -> dict | None:
+def compose_preferences(
+    cwd: str | None, repo_data: Mapping[str, object],
+    global_data: Mapping[str, object], ext_data: Mapping[str, object],
+) -> Composition | None:
     from .config import configuration_root
 
     report = owner_report(Path(configuration_root(cwd)).resolve())
     if report is None:
         return None
     context = context_from_owner(report)
-    layers = [{
+    layers: list[Layer] = [{
         "id": "vault-defaults", "tier": "defaults", "origin": "defaults",
         "values": {"vault": None, "group": None, "enabled": False},
     }, {
@@ -170,8 +177,9 @@ def compose_preferences(cwd, repo_data: dict, global_data: dict, ext_data: dict)
     sources = [(context["base_root"], "repository", "base")]
     if context["binding"] == "bound":
         sources.append((context["knowledge_root"], "repository", "knowledge"))
-    if report.get("repository_machine_root"):
-        sources.append((report["repository_machine_root"], "repository_machine", "repository_machine"))
+    machine_root = report.get("repository_machine_root")
+    if isinstance(machine_root, str) and machine_root:
+        sources.append((machine_root, "repository_machine", "repository_machine"))
     for root, tier, origin in sources:
         if not Path(root).exists():
             continue
@@ -181,7 +189,7 @@ def compose_preferences(cwd, repo_data: dict, global_data: dict, ext_data: dict)
         raw = document["values"]
         if origin != "base" and set(raw) - FIELDS:
             raise ValueError("portable vault selection cannot change database or runtime custody")
-        layer = {
+        layer: Layer = {
             "id": f"vault-{origin}", "tier": tier, "origin": origin,
             "repository_id": context["repository_id"],
             "values": _ordinary(raw), "source": document["source"],
@@ -217,5 +225,5 @@ def runtime_enabled(cwd: str | None = None) -> bool:
     _validate_config_data(machine, "global vault configuration")
     result = compose_preferences(cwd, repository, machine, {})
     if result is not None:
-        return result["values"]["enabled"]
-    return machine.get("enabled", repository.get("enabled", False))
+        return cast(bool, result["values"]["enabled"])
+    return cast(bool, machine.get("enabled", repository.get("enabled", False)))

@@ -87,8 +87,8 @@ def test_native_probe_does_not_substitute_a_previous_generation(tmp_path: Path) 
 
 @pytest.mark.parametrize("selection", ("default", "normal", "repair", "fresh", "outside", "missing", "case"))
 def test_command_owner_uses_only_the_existing_fixture_project_root(
-    tmp_path, monkeypatch, selection,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str,
+) -> None:
     from agent_procutil import _caller_owned
 
     project = tmp_path / "project"
@@ -106,9 +106,9 @@ def test_command_owner_uses_only_the_existing_fixture_project_root(
         setup["project_root"] = str(project)
     if selection != "default":
         (tmp_path / "setup.json").write_text(json.dumps(setup))
-    calls = []
+    calls: list[dict[str, Any]] = []
 
-    def run(argv, **options):
+    def run(argv: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
         calls.append(options)
         return subprocess.CompletedProcess(argv, 0, "cooperative stop", "")
 
@@ -285,7 +285,7 @@ def test_process_trace_scopes_birth_identity_and_omits_argument_values(
     assert [row["no_bytecode"] for row in records[:2]] == [True, False]
 
 
-def _trace_session_fixture(*, close_fails=False):
+def _trace_session_fixture(*, close_fails: bool = False) -> str:
     return (
         "$script:ownedCim=$null;$script:sessionCreations=0;"
         "function New-CimSessionOption {param($Protocol);"

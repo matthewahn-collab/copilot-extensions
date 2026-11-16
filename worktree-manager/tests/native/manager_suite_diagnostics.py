@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import json
 import hashlib
@@ -12,7 +13,7 @@ from pathlib import Path
 import re
 import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 MAX_LOG_BYTES = 4 * 1024 * 1024
 _ACTIVATION_PROBE = r"""
@@ -55,10 +56,10 @@ MARKERS = {
 
 
 @contextmanager
-def _consumer_demand(name: str, root: Path):
-    endpoint = None
+def _consumer_demand(name: str, root: Path) -> Iterator[Callable[[], None]]:
+    endpoint: tuple[str, int, str] | None = None
     next_refresh = 0.0
-    client_id = None
+    client_id: str | None = None
 
     def refresh() -> None:
         nonlocal endpoint, next_refresh, client_id
@@ -80,7 +81,7 @@ def _consumer_demand(name: str, root: Path):
                 client_id = client.new_client_id()
             client.subscribe(*selected, client_id, timeout=1)
             if endpoint is not None and endpoint != selected:
-                client.release(*endpoint, client_id, timeout=1)
+                client.release(*endpoint, cast(str, client_id), timeout=1)
             endpoint = selected
         next_refresh = time.monotonic() + 5
 
@@ -89,7 +90,7 @@ def _consumer_demand(name: str, root: Path):
     finally:
         if endpoint is not None:
             from work_coalescing_singleton import client
-            client.release(*endpoint, client_id, timeout=1)
+            client.release(*endpoint, cast(str, client_id), timeout=1)
 
 
 def _record(root: Path, name: str) -> tuple[dict[str, Any], int]:
@@ -124,20 +125,20 @@ def _resident_probe(name: str, root: Path, expected_pid: int) -> dict[str, Any]:
     if record["pid"] != expected_pid:
         raise RuntimeError("Resident changed before health observation")
     if name == "worktree-manager":
-        from worktree_manager import mux_daemon_cutover as control
-        route = control.routed_endpoint(root)
+        from worktree_manager import mux_daemon_cutover as manager_control
+        route = manager_control.routed_endpoint(root)
         if route is None or route.pid != expected_pid:
             raise RuntimeError("Manager route does not name the observed PID")
-        status = control.ControlClient(route.base_url, root=root, timeout=1).health()
+        status = manager_control.ControlClient(route.base_url, root=root, timeout=1).health()
         ready = status.get("status") == "ready"
         generation = status.get("runtime_generation")
     elif name == "agent-worktrees":
-        from agent_worktrees import status_monitor_cutover as control
+        from agent_worktrees import status_monitor_cutover as worktree_control
         from zdd.routing import read_active_endpoint
-        route = read_active_endpoint(control.routing_dir(root))
+        route = read_active_endpoint(worktree_control.routing_dir(root))
         if route is None or route.pid != expected_pid:
             raise RuntimeError("Worktrees route does not name the observed PID")
-        status = control.ControlClient(route.base_url, config_dir=root, timeout=1).health()
+        status = worktree_control.ControlClient(route.base_url, config_dir=root, timeout=1).health()
         ready = status.get("status") == "ready"
         generation = status.get("runtime_generation")
     elif name == "agent-bridge":

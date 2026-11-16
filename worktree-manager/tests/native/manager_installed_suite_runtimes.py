@@ -6,15 +6,28 @@ admission. Its transport commit identifies fixture bytes, not a released source.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 import hashlib
 import json
 from pathlib import Path
 import shutil
 import sys
 import time
-import tomllib
+from typing import Any, Protocol
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from packaging.version import Version
+
+
+class CommandRunner(Protocol):
+    def __call__(
+        self, arguments: Sequence[str | Path], environment: dict[str, str],
+        cwd: Path, diagnostics: Path, label: str, /, *, timeout: float | None = None,
+    ) -> str: ...
 
 
 _PORTFOLIO = """
@@ -87,7 +100,7 @@ with caller_owned_readiness(True):
 """
 
 
-def expected_runtimes(profile: dict) -> set[str]:
+def expected_runtimes(profile: dict[str, Any]) -> set[str]:
     if profile["repository_config"].get("require_application_readiness") is not True:
         raise ValueError("The complete suite must require actual application readiness")
     inventory = profile["inventory"]
@@ -107,7 +120,10 @@ def expected_runtimes(profile: dict) -> set[str]:
     return names
 
 
-def validate_portfolio(profile: dict, portfolio: dict, payloads: dict, home: Path) -> None:
+def validate_portfolio(
+    profile: dict[str, Any], portfolio: dict[str, Any],
+    payloads: dict[str, Any], home: Path,
+) -> None:
     names = expected_runtimes(profile)
     if not isinstance(portfolio, dict) or not names <= set(portfolio):
         raise ValueError("The installed planner did not select the complete runtime portfolio")
@@ -134,7 +150,7 @@ def validate_portfolio(profile: dict, portfolio: dict, payloads: dict, home: Pat
             raise ValueError(f"{name}: the installed planner selected an ineligible or foreign runtime")
 
 
-def validate_origin(origin: dict, expected_prefix: Path, version: str) -> None:
+def validate_origin(origin: dict[str, Any], expected_prefix: Path, version: str) -> None:
     prefix = Path(origin["prefix"])
     module = Path(origin["module"])
     if (
@@ -147,8 +163,9 @@ def validate_origin(origin: dict, expected_prefix: Path, version: str) -> None:
 
 
 def observe_manager(
-    artifact, candidate_commit, *, root, environment, project, diagnostics, run,
-):
+    artifact: Path, candidate_commit: str, *, root: Path,
+    environment: dict[str, str], project: Path, diagnostics: Path, run: CommandRunner,
+) -> dict[str, Any]:
     """Verify fresh installed bytes without manufacturing source admission."""
     from manager_installed_suite_payloads import _PROVENANCE
     from manager_suite_fixture import _python, require_venue
@@ -201,10 +218,10 @@ def observe_manager(
 
 
 def install_runtime_closure(
-    artifact: Path, candidate_commit: str, *, payload_closure: dict,
-    manager: Path, copilot: Path, environment: dict, project: Path,
-    diagnostics: Path, deadline: float, run,
-) -> dict:
+    artifact: Path, candidate_commit: str, *, payload_closure: dict[str, Any],
+    manager: Path, copilot: Path, environment: dict[str, str], project: Path,
+    diagnostics: Path, deadline: float, run: CommandRunner,
+) -> dict[str, Any]:
     """Run the real normal updater, then observe every selected runtime."""
     from manager_installed_suite_payloads import _PROVENANCE, selected_profile
     from manager_suite_fixture import require_venue
@@ -256,7 +273,7 @@ def install_runtime_closure(
     ):
         raise ValueError("Runtime construction lost its byte-preserving Git checkout template")
 
-    def verify_inputs(phase):
+    def verify_inputs(phase: str) -> None:
         for name, row in payloads.items():
             payload = Path(row["path"])
             if not payload.resolve().is_relative_to(home.resolve()):
@@ -288,7 +305,7 @@ def install_runtime_closure(
         **environment, "GIT_TEMPLATE_DIR": transport["checkout_template"],
         "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
     }
-    def remaining():
+    def remaining() -> float:
         value = deadline - time.monotonic()
         if value <= 0:
             raise TimeoutError("Suite construction exhausted the existing preparation budget")

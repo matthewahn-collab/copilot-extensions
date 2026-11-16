@@ -11,9 +11,10 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TypedDict, cast
 
 from configuration_context.readiness import (
-    PROBE_CONTRACT, PROBE_ENV, ProbeContractError, payload_contract, unqualified_output,
+    PROBE_CONTRACT, PROBE_ENV as PROBE_ENV, ProbeContractError, payload_contract, unqualified_output,
 )
 from installer_readiness import build_plan, parse_readiness
 from installer_readiness.model import (
@@ -22,12 +23,56 @@ from installer_readiness.model import (
 )
 
 from .installation_repair_admission import (
-    HostAdmission, OwnerBinding, RepairAdmissionError, admit_host, digest, ordinary,
+    HostAdmission as HostAdmission, OwnerBinding as OwnerBinding,
+    RepairAdmissionError as RepairAdmissionError, admit_host, digest, ordinary,
 )
 from .installation_repair_process import (
-    ActionResult, cancel_on_termination, path_interpreter, run_action,
+    ActionResult as ActionResult, cancel_on_termination,
+    path_interpreter as path_interpreter, run_action,
 )
-from .installation_repair_restarts import RestartJournal
+from .installation_repair_restarts import RestartJournal as RestartJournal
+
+
+class OutcomeEvidence(TypedDict):
+    module: str
+    classification: str
+    observedBefore: dict[str, str]
+    selected: bool
+    attempted: bool
+    installer: dict[str, str | int | None] | None
+    observedAfter: dict[str, str] | None
+    blockedBy: list[str]
+    restart: str
+    restartRequired: bool
+
+
+class RestartEvidence(TypedDict):
+    pendingDigest: str | None
+    pending: list[dict[str, object]]
+    completion: str
+    automaticRestart: bool
+
+
+class RepairReport(TypedDict, total=False):
+    schema: str
+    version: int
+    status: str
+    interrupted: bool
+    confirmation: str
+    confirmedRestarts: RestartEvidence
+    restarts: RestartEvidence
+    projectRoot: str
+    requiredSelection: bool
+    platform: str
+    apply: bool
+    planDigest: str
+    requiredSatisfied: bool
+    selectionRefusal: str | None
+    selected: list[str]
+    available: list[str]
+    refusedOwners: dict[str, str]
+    discoveryFindings: list[str]
+    outcomes: list[OutcomeEvidence]
 
 
 def current_platform() -> Platform:
@@ -256,7 +301,7 @@ def _closure(host: HostAdmission, requested: Sequence[str], platform: Platform) 
     selected: dict[str, Module] = {}
     visiting: set[str] = set()
 
-    def include(qualified: str):
+    def include(qualified: str) -> None:
         if not 1 <= len(qualified) <= 256:
             raise RepairAdmissionError("selected module identity exceeds its bound")
         if qualified in duplicates or qualified not in by_id:
@@ -394,7 +439,7 @@ def repair(
     confirm_restart: str | None = None,
     on_observation: Callable[[list[dict[str, object]]], None] | None = None,
     readiness_only: bool = False,
-) -> dict[str, object]:
+) -> RepairReport:
     """Serialize apply and explicit restart confirmation against durable obligations."""
     if type(readiness_only) is not bool or (
         readiness_only and (apply or not required or modules or expected_plan_digest or confirm_restart)
@@ -411,8 +456,9 @@ def repair(
             return {
                 "schema": "copilot-extensions.installation-repair", "version": 1,
                 "status": "restart-confirmed", "interrupted": False,
-                "confirmation": "operator-attestation", "confirmedRestarts": confirmed,
-                "restarts": journal.evidence(),
+                "confirmation": "operator-attestation",
+                "confirmedRestarts": cast(RestartEvidence, confirmed),
+                "restarts": cast(RestartEvidence, journal.evidence()),
             }
         if apply:
             with journal.locked():
@@ -446,7 +492,7 @@ def _repair(
     readiness_timeout: float, installer_timeout: float, journal: RestartJournal,
     on_observation: Callable[[list[dict[str, object]]], None] | None = None,
     readiness_only: bool = False,
-) -> dict[str, object]:
+) -> RepairReport:
     """Reconstruct host admission and invoke only the explicit selected closure."""
     if (
         type(apply) is not bool or type(required) is not bool
@@ -609,7 +655,7 @@ def _repair(
         "projectRoot": str(project_root.resolve()), "requiredSelection": required,
         "platform": platform.value, "apply": apply, "planDigest": plan_digest,
         "interrupted": interrupted,
-        "restarts": journal.evidence(),
+        "restarts": cast(RestartEvidence, journal.evidence()),
         "status": ("observed" if selected or required else "discovered") if not apply else (
             "ready" if satisfied else "incomplete" if not required_satisfied else "optional-incomplete"
         ),
@@ -619,5 +665,5 @@ def _repair(
         "available": sorted(module.qualified_id for module in host.report.modules),
         "refusedOwners": dict(host.refused),
         "discoveryFindings": sorted({finding.code for finding in host.report.findings}),
-        "outcomes": [outcome.evidence() for outcome in outcomes.values()],
+        "outcomes": [cast(OutcomeEvidence, outcome.evidence()) for outcome in outcomes.values()],
     }

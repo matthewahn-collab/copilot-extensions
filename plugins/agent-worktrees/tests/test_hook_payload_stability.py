@@ -15,7 +15,7 @@ from agent_procutil.owned_process import run_caller_owned
 _PLUGIN = Path(__file__).resolve().parents[1]
 
 
-def _entries(root):
+def _entries(root: Path) -> dict[str, str]:
     return {
         str(path.relative_to(root)): (
             hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "directory"
@@ -26,7 +26,7 @@ def _entries(root):
 
 @pytest.mark.parametrize("event", ["sessionStart", "preToolUse", "postToolUse"])
 @pytest.mark.parametrize("host", ["pwsh", "powershell.exe", "bash"])
-def test_cold_raw_hook_preserves_payload_without_a_managed_session(tmp_path, event, host):
+def test_cold_raw_hook_preserves_payload_without_a_managed_session(tmp_path: Path, event: str, host: str) -> None:
     if host == "bash" and os.name == "nt":
         pytest.skip("Native POSIX hook entry required")
     shell = shutil.which(host)
@@ -45,7 +45,7 @@ def test_cold_raw_hook_preserves_payload_without_a_managed_session(tmp_path, eve
     env = {
         **os.environ, "HOME": str(home), "USERPROFILE": str(home),
         "COPILOT_PLUGIN_ROOT": str(root), "COPILOT_PROJECT_DIR": str(cwd),
-        "PATH": str(Path(sys._base_executable).parent) + os.pathsep + os.environ["PATH"],
+        "PATH": str(Path(getattr(sys, "_base_executable")).parent) + os.pathsep + os.environ["PATH"],
     }
     for key in (
         "COPILOT_EXTENSIONS_CONTEXT", "AGENT_RT_ROOT", "WORKTREE_ID", "WORKTREE_PROJECT",
@@ -72,7 +72,7 @@ def test_cold_raw_hook_preserves_payload_without_a_managed_session(tmp_path, eve
         assert _entries(root) == before
 
 
-def test_imported_hook_client_preserves_the_runtime_cache_policy(tmp_path):
+def test_imported_hook_client_preserves_the_runtime_cache_policy(tmp_path: Path) -> None:
     for name in ("hook_client.py", "hook_runtime.py"):
         shutil.copy2(_PLUGIN / "scripts" / name, tmp_path / name)
     result = run_caller_owned(

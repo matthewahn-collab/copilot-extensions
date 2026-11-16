@@ -16,8 +16,8 @@ import pytest
 SCRIPT = Path(__file__).resolve().parent / "check-runtime-resolution.py"
 
 _spec = importlib.util.spec_from_file_location("check_runtime_resolution", SCRIPT)
-crr = importlib.util.module_from_spec(_spec)
 assert _spec and _spec.loader
+crr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(crr)
 
 

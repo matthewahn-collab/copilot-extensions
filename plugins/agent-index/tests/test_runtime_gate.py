@@ -9,6 +9,7 @@ import subprocess
 import sys
 import venv
 from pathlib import Path
+from collections.abc import Callable
 
 import pytest
 
@@ -354,7 +355,7 @@ def _run(
     env: dict[str, str],
     *args: str,
     cwd: Path | None = None,
-):
+) -> subprocess.CompletedProcess[str]:
     run_cwd = cwd or script.parents[2]
     if shell == "bash":
         if os.name == "nt":
@@ -1104,7 +1105,7 @@ def test_configured_roles_are_reported_without_mutation(
 
 @pytest.mark.parametrize("shell", ["bash", "pwsh"])
 @pytest.mark.parametrize("role", ["client", "host"])
-def test_stdio_mcp_never_provisions_missing_runtime(tmp_path: Path, shell: str, role: str):
+def test_stdio_mcp_never_provisions_missing_runtime(tmp_path: Path, shell: str, role: str) -> None:
     script, env = _fixture(tmp_path, shell)
     env["TEST_PYTHON"] = ""
     _configure_repository_role(tmp_path, env, role)
@@ -1477,7 +1478,7 @@ def test_active_cell_preserves_original_repository_before_safe_cwd(
     tmp_path: Path,
     shell: str,
     command: str,
-    record_property,
+    record_property: Callable[[str, object], None],
 ) -> None:
     if shell == "bash" and (os.name == "nt" or shutil.which("bash") is None):
         pytest.skip("POSIX runtime-gate test")
@@ -1501,7 +1502,7 @@ def test_active_cell_preserves_original_repository_before_safe_cwd(
     cell_root = Path(cell["pluginRoot"])
     context = Path(cell["installReceipt"])
 
-    def owner_probe(value):
+    def owner_probe(value: object) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable, "-I", "-B", "-c",

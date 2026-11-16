@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections.abc import Callable
 from functools import cache
 import json
 import os
@@ -13,7 +14,42 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if TYPE_CHECKING:
+    from agent_index.configuration_layers import NativeConfiguration
+
+
+class _LayerAdapter(Protocol):
+    def load_repository_candidate(
+        self, root: Path, native: NativeConfiguration, *, knowledge_root: Path | None = None,
+        compose_preferences: bool = True,
+    ) -> tuple[str, Path | None, dict[str, Any] | None]: ...
+
+    def knowledge_root_from_owner(self, root: Path) -> tuple[str, Path | None]: ...
+
+    def external_configuration_result(
+        self, root: Path, external_path: Path, native: NativeConfiguration,
+    ) -> dict[str, Any]: ...
+
+
+class _CommandAdapter(Protocol):
+    def path_command(self, name: str) -> str | None: ...
+    def run_git(self, git: str, start: Path, *args: str) -> subprocess.CompletedProcess[str] | None: ...
+
+
+class _CommandArguments(Protocol):
+    def __call__(self, command: str, *arguments: str) -> list[str]: ...
+
+
+class _ProbeSupport(Protocol):
+    def _readiness_support(self) -> ModuleType: ...
+    def refuse_unqualified(self, result: subprocess.CompletedProcess[str]) -> None: ...
+    def run_state_root(
+        self, command: str, environment: dict[str, str], *, cwd: Path | None,
+        project: str | None, argv: _CommandArguments,
+    ) -> subprocess.CompletedProcess[str] | None: ...
 
 CONFIG_FILENAME = "config.yaml"
 BASE_CONFIG_RELATIVE = Path(".agent-index") / CONFIG_FILENAME
@@ -267,8 +303,8 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
             if not remainder:
                 if index >= len(tokens) or tokens[index][0] <= indent:
                     raise ConfigError("list item is missing a value")
-                item, index = parse_block(index, tokens[index][0])
-                result.append(item)
+                nested_item, index = parse_block(index, tokens[index][0])
+                result.append(nested_item)
                 continue
             if ":" not in remainder:
                 result.append(_parse_scalar(remainder))
@@ -329,7 +365,9 @@ def _yaml_text_mapping(text: str) -> tuple[str, dict[str, Any] | None]:
     class UniqueKeyLoader(yaml.SafeLoader):
         pass
 
-    def construct_mapping(loader, node, deep=False):
+    def construct_mapping(
+        loader: yaml.SafeLoader, node: yaml.Node, deep: bool = False,
+    ) -> dict[Any, Any]:
         if not isinstance(node, yaml.MappingNode):
             raise ConstructorError(
                 None, None, "expected a mapping node", node.start_mark
@@ -450,7 +488,7 @@ def _validate_config(data: dict[str, Any]) -> dict[str, Any]:
                             f"corpus.sources[{index}].{key}",
                             required=True,
                         )
-                folded = source["name"].casefold()
+                folded = cast(str, source["name"]).casefold()
                 if folded in names:
                     raise ConfigError("corpus.sources contains duplicate names")
                 names.add(folded)
@@ -603,11 +641,12 @@ def _load_repo_candidate(
     root: Path, *, knowledge_root: Path | None = None, compose_preferences: bool = True,
 ) -> tuple[str, Path | None, dict[str, Any] | None]:
     return _layer_adapter().load_repository_candidate(
-        root, globals(), knowledge_root=knowledge_root, compose_preferences=compose_preferences,
+        root, cast("NativeConfiguration", globals()),
+        knowledge_root=knowledge_root, compose_preferences=compose_preferences,
     )
 
 
-def _layer_adapter():
+def _layer_adapter() -> _LayerAdapter:
     bundled = Path(__file__).parent / "configuration-layers" / "src"
     if bundled.is_dir():
         sys.path.insert(0, str(bundled))
@@ -617,7 +656,7 @@ def _layer_adapter():
     return configuration_layers
 
 
-def _parse_yaml_for_layers(text):
+def _parse_yaml_for_layers(text: str) -> dict[str, Any]:
     """Use the same strict native parser on every projected preference source."""
     state, value = _yaml_text_mapping(text)
     if state != "ready" or value is None:
@@ -625,13 +664,13 @@ def _parse_yaml_for_layers(text):
     return value
 
 
-def _configuration_knowledge_root(root):
+def _configuration_knowledge_root(root: Path) -> tuple[str, Path | None]:
     """Read the existing configuration owner, never a provisioning front door."""
     return _layer_adapter().knowledge_root_from_owner(root)
 
 
 @cache
-def _command_adapter() -> Any:
+def _command_adapter() -> _CommandAdapter:
     import importlib.util
 
     path = Path(__file__).with_name("config_commands.py")
@@ -640,7 +679,7 @@ def _command_adapter() -> Any:
         raise RuntimeError("agent-index configuration commands are unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    return cast(_CommandAdapter, module)
 
 
 def _run_git(git: str, start: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
@@ -731,7 +770,7 @@ def _validate_index_owner_or_refuse(raw_context: str) -> dict[str, Any]:
     peer_launch = _load_peer_launch()
     plugin_root = Path(__file__).resolve().parents[1]
     try:
-        return peer_launch.validate_owner("agent-index", plugin_root, raw_context)
+        return cast(dict[str, Any], peer_launch.validate_owner("agent-index", plugin_root, raw_context))
     except (OSError, ValueError, ImportError) as error:
         raise peer_launch.ContextRefused(
             f"agent-index installation context refused: {error}"
@@ -739,7 +778,7 @@ def _validate_index_owner_or_refuse(raw_context: str) -> dict[str, Any]:
 
 
 @cache
-def _probe_support() -> Any:
+def _probe_support() -> _ProbeSupport:
     import importlib.util
 
     path = Path(__file__).with_name("resolve_effective_probe.py")
@@ -748,10 +787,10 @@ def _probe_support() -> Any:
         raise RuntimeError("agent-index probe boundary is unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    return cast(_ProbeSupport, module)
 
 
-def _readiness_support():
+def _readiness_support() -> ModuleType:
     return _probe_support()._readiness_support()
 
 
@@ -866,7 +905,7 @@ def _run_state_root(
 
 def _external_state_root_runner(
     root: Path,
-) -> tuple[Any, None] | tuple[None, tuple[str, Path | None]]:
+) -> tuple[Callable[[Path | None, str | None], subprocess.CompletedProcess[str] | None], None] | tuple[None, tuple[str, Path | None]]:
     """Choose the same-cell peer boundary or the legacy ambient-PATH runner.
 
     Under an explicit installation context (and no test-only
@@ -883,10 +922,10 @@ def _external_state_root_runner(
         if not peer_root.exists() and not peer_root.is_symlink():
             return None, ("unavailable", None)
 
-        def run(cwd: Path | None, project: str | None) -> subprocess.CompletedProcess[str] | None:
+        def run_legacy(cwd: Path | None, project: str | None) -> subprocess.CompletedProcess[str] | None:
             return _run_state_root_same_cell(own, raw_context, cwd=cwd, project=project)
 
-        return run, None
+        return run_legacy, None
     command = _worktrees_command()
     if not command:
         return None, ("unavailable", None)
@@ -1104,7 +1143,9 @@ def resolve(cwd: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         and external_path is not None
         and external is not None
     ):
-        return _layer_adapter().external_configuration_result(root, external_path, globals())
+        return _layer_adapter().external_configuration_result(
+            root, external_path, cast("NativeConfiguration", globals()),
+        )
     return _result(
         opted_in=False,
         source="external-state-root",

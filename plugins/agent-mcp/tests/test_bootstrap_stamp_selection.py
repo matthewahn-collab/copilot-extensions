@@ -80,6 +80,7 @@ def test_native_post_repair_bootstrap_readiness(
         assert bool(shared["_children"](home)) is (condition != "healthy")
         assert not (install / "logs").exists()
         return
+    assert host is not None
     hook = str(scripts / "bootstrap-check.ps1").replace("'", "''")
     command = f". '{hook}'"
     env = shared["_environment"](home)
@@ -88,7 +89,7 @@ def test_native_post_repair_bootstrap_readiness(
     result = subprocess.run(
         [host, "-NoProfile", "-Command", command], cwd=home, env=env,
         capture_output=True, text=True, timeout=30,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
     )
     assert result.returncode == 0 and result.stdout == "{}", result.stdout + result.stderr
     assert (home / "children").exists() is (condition != "healthy"), result.stderr

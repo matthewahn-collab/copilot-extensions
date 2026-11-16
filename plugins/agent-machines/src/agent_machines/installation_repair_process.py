@@ -10,13 +10,18 @@ import signal
 import subprocess
 import sys
 import threading
-import time
-from collections.abc import Mapping, Sequence
+import time as time
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import FrameType
+from typing import BinaryIO
 
-from agent_procutil import no_window_kwargs, spawn_sync_in_kill_on_close_job
+from agent_procutil import (
+    no_window_kwargs,
+    spawn_sync_in_kill_on_close_job as spawn_sync_in_kill_on_close_job,
+)
 from agent_procutil.owned_process import (
     OutputLimitExceeded, OwnedCleanupError, OwnedExecutionBudget,
     require_contained_worker, run_caller_owned,
@@ -49,12 +54,12 @@ def path_interpreter(name: str) -> str | None:
     return None
 
 
-def _ignore_cancellation():
+def _ignore_cancellation() -> None:
     for signum in _CANCEL_SIGNALS:
         signal.signal(signum, signal.SIG_IGN)
 
 
-def _cancel_signal(signum, frame):
+def _cancel_signal(signum: int, frame: FrameType | None) -> None:
     _termination.pending = True
     if not getattr(_termination, "deferring", False):
         # A second termination request must not interrupt descendant cleanup.
@@ -63,7 +68,7 @@ def _cancel_signal(signum, frame):
 
 
 @contextmanager
-def cancel_on_termination():
+def cancel_on_termination() -> Iterator[None]:
     """Keep CLI termination inside the same cleanup/lock lifetime as cancellation."""
     if threading.current_thread() is not threading.main_thread():
         yield
@@ -88,7 +93,7 @@ def cancel_on_termination():
 
 
 @contextmanager
-def caller_owned_readiness(enabled: bool):
+def caller_owned_readiness(enabled: bool) -> Iterator[None]:
     """Borrow only an explicit caller's native containment, never an installer scope."""
     previous = getattr(_termination, "caller_owned_readiness", False)
     if enabled:
@@ -192,10 +197,10 @@ def run_action(
     overflow = threading.Event()
     chunks: list[bytes] = []
     readers: list[threading.Thread] = []
-    started_streams = []
+    started_streams: list[BinaryIO] = []
     terminated = False
 
-    def drain(stream, *, retain: bool):
+    def drain(stream: BinaryIO, *, retain: bool) -> None:
         size = 0
         try:
             while block := stream.read(4096):
@@ -207,7 +212,7 @@ def run_action(
         finally:
             stream.close()
 
-    def terminate():
+    def terminate() -> None:
         nonlocal terminated
         if terminated:
             return

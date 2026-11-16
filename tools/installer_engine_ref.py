@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import re
+from typing import cast
 
 import uv_editable_ref as uer
 
@@ -307,7 +308,7 @@ def plugin_ref_map(plugin_dir: Path) -> dict[str, EngineRef]:
 
 
 def ref_escapes_plugin_root(ref: EngineRef, plugin_dir: Path) -> bool:
-    return uer.escapes_root(ref.resolved(), plugin_dir.resolve())
+    return cast(bool, uer.escapes_root(ref.resolved(), plugin_dir.resolve()))
 
 
 def is_canonical_ref(ref: EngineRef, plugin_dir: Path, *, repo_root: Path = REPO) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -13,14 +14,20 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import TypedDict
 
-from plugin_test_containment import no_window_kwargs
-from agent_procutil import contained_test_mode
+from agent_procutil import contained_test_mode, no_window_kwargs
 from agent_procutil.owned_process import run_installation_owned
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "worktree-manager" / "tests" / "native" / "test_manager_suite_replacement.py"
 FRESH_FIXTURE = FIXTURE.with_name("manager_installed_suite_fixture.py")
+
+
+class _SuiteReport(TypedDict):
+    mode: str
+    stages: dict[str, int]
+    errors: list[str]
 
 
 def _run(argv: list[str], *, timeout: float) -> int:
@@ -34,12 +41,17 @@ def _run(argv: list[str], *, timeout: float) -> int:
 
 
 @contextmanager
-def _observe_processes(root: Path, mode: str, script):
+def _observe_processes(
+    root: Path, mode: str, script: Callable[[Path, Path, Path, Path], str],
+) -> Iterator[None]:
     ready = root / f"{mode}-process-trace.ready"
     stop = root / f"{mode}-process-trace.stop"
     report = root / f"{mode}-process-trace.json"
+    executable = shutil.which("pwsh")
+    if executable is None:
+        raise FileNotFoundError("The native process observer requires PowerShell 7")
     command = [
-        shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
+        executable, "-NoProfile", "-NonInteractive", "-Command",
         script(root / mode / "h", ready, stop, report),
     ]
     with ThreadPoolExecutor(max_workers=1) as observer:
@@ -64,7 +76,7 @@ def _observe_processes(root: Path, mode: str, script):
 
 def qualify(root: Path, mode: str, python: Path) -> int:
     """Keep cleanup independent of success, assertion failure and stage timeout."""
-    report: dict = {"mode": mode, "stages": {}, "errors": []}
+    report: _SuiteReport = {"mode": mode, "stages": {}, "errors": []}
     previous_data = os.environ.get("MANAGER_SUITE_ACCEPTANCE_DATA")
     fixture = FRESH_FIXTURE if mode == "fresh" else FIXTURE
     try:

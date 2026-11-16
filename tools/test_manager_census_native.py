@@ -1,10 +1,12 @@
 """Short opt-in real CIM profiles; not whole-suite lifecycle acceptance."""
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import runpy
 import shutil
+import subprocess
 import sys
 import time
 import venv
@@ -70,7 +72,10 @@ finally:
 
 
 @pytest.mark.parametrize("mode", ("quiet", "churn", "burst", "venv-burst"))
-def test_real_manager_census_profile(tmp_path, record_property, monkeypatch, mode):
+def test_real_manager_census_profile(
+    tmp_path: Path, record_property: Callable[[str, str], None],
+    monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "libs" / "agent-procutil" / "src"))
     from agent_procutil.owned_process import run_caller_owned
 
@@ -88,7 +93,7 @@ def test_real_manager_census_profile(tmp_path, record_property, monkeypatch, mod
     (tmp_path / "process-trace-window").write_text("profile")
     deadline = time.monotonic() + 23
 
-    def load():
+    def load() -> subprocess.CompletedProcess[str]:
         return run_caller_owned(
             [sys.executable, "-I", "-B", "-c", _LOAD,
              str(ROOT / "libs" / "agent-procutil" / "src"),
@@ -101,8 +106,10 @@ def test_real_manager_census_profile(tmp_path, record_property, monkeypatch, mod
     with ThreadPoolExecutor(max_workers=1) as pool:
         loading = pool.submit(load)
         try:
+            executable = shutil.which("pwsh")
+            assert executable is not None, "Native census requires PowerShell 7"
             result = run_caller_owned(
-                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
+                [executable, "-NoProfile", "-NonInteractive", "-Command",
                  script(home, ready, stop, report)],
                 timeout=max(.1, min(20, deadline - time.monotonic())),
                 max_stdout_bytes=4096, max_stderr_bytes=4096,

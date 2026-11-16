@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping, Sequence
 import json
 import os
 from pathlib import Path
@@ -19,21 +20,23 @@ from test_install_engine_adoption import (
 )
 
 
-def _files(root):
+def _files(root: Path) -> dict[str, str]:
     return {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in root.rglob("*") if path.is_file()
     }
 
 
-def _run(arguments, *, cwd, env, input=None):
+def _run(
+    arguments: Sequence[str], *, cwd: Path, env: Mapping[str, str], input: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         arguments, cwd=cwd, env=env, input=input, capture_output=True, text=True, timeout=25,
         **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
     )
 
 
-def _configuration_bundle(payload):
+def _configuration_bundle(payload: Path) -> None:
     scripts = payload / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     for name in ("resolve-activation-role.py", "resolve_effective_config.py", "config_commands.py"):
@@ -43,7 +46,7 @@ def _configuration_bundle(payload):
     shutil.copytree(PLUGIN / "src", payload / "src", ignore=ignore)
 
 
-def _repository(tmp_path, env):
+def _repository(tmp_path: Path, env: Mapping[str, str]) -> Path:
     repository = tmp_path / "repository"
     repository.mkdir()
     result = _run(["git", "init", "-q", str(repository)], cwd=tmp_path, env=env)
@@ -51,7 +54,7 @@ def _repository(tmp_path, env):
     return repository
 
 
-def test_cold_runtime_helper_cli_does_not_write_into_its_payload(tmp_path):
+def test_cold_runtime_helper_cli_does_not_write_into_its_payload(tmp_path: Path) -> None:
     scripts = tmp_path / "payload" / "scripts"
     construction_bundle(scripts)
     before = _files(scripts)
@@ -67,7 +70,9 @@ def test_cold_runtime_helper_cli_does_not_write_into_its_payload(tmp_path):
 
 
 @pytest.mark.parametrize("entrypoint", ("session-writer", "pwsh", "powershell.exe", "bash"))
-def test_cold_scope_binding_preserves_the_complete_payload(tmp_path, monkeypatch, entrypoint):
+def test_cold_scope_binding_preserves_the_complete_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str,
+) -> None:
     from test_write_session_guidance import writer
 
     if entrypoint == "bash" and (os.name == "nt" or not shutil.which("bash")):
@@ -101,8 +106,8 @@ def test_cold_scope_binding_preserves_the_complete_payload(tmp_path, monkeypatch
             monkeypatch.setattr(writer, "os", SimpleNamespace(environ=env, path=os.path))
             context = writer._scope_binding_context(payload, {"cwd": str(repository)})
         else:
-            argv = [shell, str(scripts / "emit-scope-binding.sh")] if entrypoint == "bash" else [
-                shell, "-NoProfile", "-File", str(scripts / "emit-scope-binding.ps1"),
+            argv = [str(shell), str(scripts / "emit-scope-binding.sh")] if entrypoint == "bash" else [
+                str(shell), "-NoProfile", "-File", str(scripts / "emit-scope-binding.ps1"),
             ]
             result = _run(argv, cwd=repository, env=env)
             assert result.returncode == 0, result.stdout + result.stderr
@@ -111,7 +116,8 @@ def test_cold_scope_binding_preserves_the_complete_payload(tmp_path, monkeypatch
         assert _files(payload) == before
 
 
-def test_cold_bash_role_probe_preserves_payload_for_real_completion(tmp_path):
+def test_cold_bash_role_probe_preserves_payload_for_real_completion(tmp_path: Path) -> None:
+    shell: Path | str | None
     if os.name == "nt":
         git = shutil.which("git")
         shell = Path(git).parent.parent / "bin" / "bash.exe" if git else None
@@ -168,7 +174,9 @@ def test_cold_bash_role_probe_preserves_payload_for_real_completion(tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows installer construction")
 @pytest.mark.parametrize("host", ["pwsh", "powershell"])
-def test_cold_installer_hash_survives_real_construction_and_role_resolution(tmp_path, host):
+def test_cold_installer_hash_survives_real_construction_and_role_resolution(
+    tmp_path: Path, host: str,
+) -> None:
     shell = shutil.which(host)
     if not shell:
         pytest.skip("PowerShell is unavailable")

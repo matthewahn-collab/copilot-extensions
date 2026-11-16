@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import ModuleType
 from typing import Callable
 
 
-def _readiness_support():
+def _readiness_support() -> ModuleType:
     bundled = Path(__file__).parent / "configuration-layers" / "src"
     if str(bundled) not in sys.path:
         sys.path.insert(0, str(bundled))

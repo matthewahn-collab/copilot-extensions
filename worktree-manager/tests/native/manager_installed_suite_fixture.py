@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import hashlib
 import json
 import os
@@ -11,9 +12,17 @@ import shutil
 import socket
 import sys
 import time
-import tomllib
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 import yaml
+
+if TYPE_CHECKING:
+    from agent_procutil.daemon_instances import InstanceCleanupResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,8 +36,15 @@ import test_manager_installed_tty as installed
 RESULT_SCHEMA = "worktree-manager.installed-suite-lifecycle.v1"
 
 
-def _run_owner(deadline):
-    def run(argv, environment, cwd, diagnostics, label, *, timeout=None):
+class _NoteReceiver(Protocol):
+    def add_note(self, note: str) -> None: ...
+
+
+def _run_owner(deadline: float) -> runtimes.CommandRunner:
+    def run(
+        argv: Sequence[str | Path], environment: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float | None = None,
+    ) -> str:
         from agent_procutil._caller_owned import run as owned_run
 
         remaining = deadline - time.monotonic()
@@ -53,16 +69,19 @@ def _run_owner(deadline):
     return run
 
 
-def _install_engine(payload, root, environment, project, diagnostics, label, run):
+def _install_engine(
+    payload: Path, root: Path, environment: dict[str, str], project: Path,
+    diagnostics: Path, label: str, run: runtimes.CommandRunner,
+) -> None:
     base = Path(getattr(sys, "_base_executable", sys.executable))
     run([
         base, "-I", "-S", "-B", payload / "scripts" / "runtime_install_driver.py",
-        "--payload", payload, "--root", root, "--shell", shutil.which("pwsh"),
+        "--payload", payload, "--root", root, "--shell", str(shutil.which("pwsh")),
         "--action", "provision", "--bootstrap-python", base,
     ], environment, project, diagnostics, label)
 
 
-def _environment(case, setup):
+def _environment(case: Path, setup: dict[str, Any]) -> dict[str, str]:
     env = lifecycle._case_environment(case, environment=suite._env(case))
     home = Path(env["USERPROFILE"])
     env["AGENT_HOME"] = str(home)
@@ -80,14 +99,14 @@ def _environment(case, setup):
     return env
 
 
-def _case(directory):
+def _case(directory: Path) -> tuple[Path, dict[str, Any]]:
     case, setup = suite._case(directory, "fresh")
     if setup.get("identity") != lifecycle._identity():
         raise ValueError("Fresh suite evidence belongs to a different candidate/run")
     return case, setup
 
 
-def _roles(case, profile):
+def _roles(case: Path, profile: dict[str, Any]) -> None:
     project = case / lifecycle.PROJECT
     machine = socket.gethostname().split(".")[0].strip().lower()
     aliases = [machine, "tty-fixture"]
@@ -108,7 +127,7 @@ def _roles(case, profile):
     suite._write(project / ".agent-vault.json", {"enabled": True})
 
 
-def prepare(directory):
+def prepare(directory: Path) -> None:
     from agent_procutil.owned_budget import OwnedExecutionBudget
     from plugin_test_command_safety import private_mux_args
     from plugin_test_containment import SANDBOX_ENV
@@ -127,7 +146,7 @@ def prepare(directory):
     case.mkdir(parents=True, exist_ok=False)
     (case / "project").mkdir()
     (case / "diagnostics").mkdir()
-    setup = {
+    setup: dict[str, Any] = {
         "schema": suite.SCHEMA, "mode": "fresh", "case_root": str(case),
         "ready": False, "identity": lifecycle._identity(),
     }
@@ -226,7 +245,7 @@ def prepare(directory):
         (case / "process-trace-window").write_text("fresh", encoding="utf-8")
 
 
-def _verify_retained_payloads(case, rows):
+def _verify_retained_payloads(case: Path, rows: dict[str, Any]) -> None:
     from manager_suite_diagnostics import _snapshot_difference
 
     failure = None
@@ -238,19 +257,23 @@ def _verify_retained_payloads(case, rows):
             if failure is None:
                 failure = ValueError(detail)
             else:
-                failure.add_note(detail)
+                cast(_NoteReceiver, failure).add_note(detail)
             try:
                 suite._write(
                     case / "diagnostics" / f"suite-lifecycle-payload-difference-{name}.json",
                     _snapshot_difference(expected, actual),
                 )
             except OSError as write_error:
-                failure.add_note(f"Payload difference diagnostic write: {write_error}")
+                cast(_NoteReceiver, failure).add_note(
+                    f"Payload difference diagnostic write: {write_error}",
+                )
     if failure is not None:
         raise failure
 
 
-def _verify_prepared(case, setup, run):
+def _verify_prepared(
+    case: Path, setup: dict[str, Any], run: runtimes.CommandRunner,
+) -> dict[str, str]:
     if setup.get("ready") is not True:
         raise ValueError("Fresh suite preparation did not finish")
     closure = setup["closure"]
@@ -302,7 +325,7 @@ def _verify_prepared(case, setup, run):
     return env
 
 
-def _verify_native_cleanup(case, cleanup):
+def _verify_native_cleanup(case: Path, cleanup: Sequence[InstanceCleanupResult]) -> None:
     unsettled = sum(row.status != "settled" for row in cleanup)
     failure = RuntimeError("The private native lifecycle did not settle") if unsettled else None
     try:
@@ -316,13 +339,13 @@ def _verify_native_cleanup(case, cleanup):
     except OSError as write_error:
         if failure is None:
             raise
-        failure.add_note(f"Cleanup diagnostic write: {write_error}")
+        cast(_NoteReceiver, failure).add_note(f"Cleanup diagnostic write: {write_error}")
         raise failure from write_error
     if failure is not None:
         raise failure
 
 
-def exercise(directory):
+def exercise(directory: Path) -> None:
     from agent_procutil.daemon_instances import daemon_test_lifecycle
     from agent_procutil.owned_budget import OwnedExecutionBudget
     from plugin_test_containment import SANDBOX_ENV
@@ -332,7 +355,7 @@ def exercise(directory):
     budget = OwnedExecutionBudget.from_timeout(870, cleanup_reserve=30)
     run = _run_owner(budget.execution_deadline)
     env = _verify_prepared(case, setup, run)
-    cleanup = []
+    cleanup: list[InstanceCleanupResult] = []
     with (
         payloads.serve_git_transport(
             setup["transport"], environment=env, project=case / lifecycle.PROJECT,
@@ -364,9 +387,10 @@ def exercise(directory):
     })
 
 
-def settle(directory):
+def settle(directory: Path) -> None:
     case, setup = _case(directory)
-    observed, errors = {}, []
+    observed: dict[str, dict[str, int]] = {}
+    errors: list[str] = []
     for name in suite.MARKERS:
         root = case / "h" / ("." + name)
         try:
@@ -393,13 +417,13 @@ def settle(directory):
         raise AssertionError("Native resident inventory was incomplete")
 
 
-def assertions(directory):
+def assertions(directory: Path) -> None:
     case, setup = _case(directory)
     result = suite._read(case / "result.json")
     validate_evidence(setup, result)
 
 
-def validate_evidence(setup, result):
+def validate_evidence(setup: dict[str, Any], result: dict[str, Any]) -> None:
     manager_origin = result.get("manager_origin")
     records = manager_origin.get("constructor_records") if isinstance(manager_origin, dict) else None
     if (
@@ -438,7 +462,7 @@ def validate_evidence(setup, result):
         raise ValueError("Incomplete or wrong-candidate full-suite lifecycle evidence")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     stages = parser.add_mutually_exclusive_group(required=True)
     for stage in ("prepare", "exercise", "settle", "assertions"):

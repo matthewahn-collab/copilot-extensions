@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 import http.server
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -15,11 +17,152 @@ import subprocess
 import sys
 import threading
 import time
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, BinaryIO, NoReturn, Protocol, TypeVar, TypedDict, cast
 
 import pytest
 import yaml
 
 import test_manager_installed_tty as installed
+
+if TYPE_CHECKING:
+    from agent_procutil.daemon_instances import InstanceCleanupResult
+    from manager_installed_suite_runtimes import CommandRunner
+
+
+_T = TypeVar("_T")
+_JsonObject = dict[str, Any]
+_RecordProperty = Callable[[str, str], None]
+_NativeIdentity = tuple[int, int]
+_NativeConsole = installed._Console
+
+
+class _Event(TypedDict):
+    type: str
+    data: _JsonObject
+
+
+class _MessageSequence(TypedDict):
+    messages: list[_JsonObject]
+    omitted: int
+
+
+class _Budget(Protocol):
+    @property
+    def execution_deadline(self) -> float: ...
+
+
+class _Output(Protocol):
+    @property
+    def output(self) -> bytes | bytearray: ...
+
+
+class _Input(_Output, Protocol):
+    def send(self, value: bytes) -> None: ...
+
+
+class _Cell(Protocol):
+    data: str
+    fg: str
+    bg: str
+    reverse: bool
+    underscore: bool
+    bold: bool
+
+
+class _Screen(Protocol):
+    columns: int
+    lines: int
+    display: list[str]
+    buffer: dict[int, dict[int, _Cell]]
+    report_device_status: Callable[..., None]
+
+
+class _ByteStream(Protocol):
+    def feed(self, data: bytes) -> None: ...
+
+
+class _Pyte(Protocol):
+    def Screen(self, columns: int, lines: int) -> _Screen: ...
+    def ByteStream(self, screen: _Screen) -> _ByteStream: ...
+
+
+class _ScreenState:
+    def __init__(self, console: _Output, screen: _Screen, stream: _ByteStream) -> None:
+        self.console, self.screen, self.stream = console, screen, stream
+        self.offset = 0
+
+
+class _ProcessMetadata(TypedDict):
+    parent_pid: int
+    program: str
+    module: str | None
+    verb: str | None
+    project_matches: bool
+    python_flags: list[str]
+    cache_namespace: str | None
+    argument_count: int
+    owned_extension_bootstrap: bool
+    script_basenames: list[str]
+    cli_option_names: list[str]
+    native_cli_flags: list[str]
+
+
+class _NativeRow(_ProcessMetadata):
+    pid: int
+    birth: int
+
+
+class _TransportArguments(TypedDict):
+    environment: dict[str, str]
+    project: Path
+    diagnostics: Path
+    deadline: float
+    run: CommandRunner
+
+
+class _ExceptionNotes(Protocol):
+    __notes__: list[str]
+
+
+class _Dword(Protocol):
+    value: int
+
+
+class _DwordReference(Protocol):
+    _obj: _Dword
+
+
+class _NativeFunction(Protocol):
+    argtypes: list[object]
+    restype: object
+
+    def __call__(self, *arguments: object) -> int | None: ...
+
+
+class _ArgvArray(Protocol):
+    def __bool__(self) -> bool: ...
+    def __getitem__(self, index: int) -> str: ...
+
+
+class _ArgvFunction(Protocol):
+    argtypes: list[object]
+    restype: object
+
+    def __call__(self, command: str, count: object) -> _ArgvArray: ...
+
+
+class _WindowsLibrary(Protocol):
+    NtQueryInformationProcess: _NativeFunction
+    CommandLineToArgvW: _ArgvFunction
+    LocalFree: _NativeFunction
+
+
+class _WindowsCtypes(Protocol):
+    def WinDLL(self, name: str) -> _WindowsLibrary: ...
+    def WinError(self, code: int) -> OSError: ...
+    def get_last_error(self) -> int: ...
+
 
 PROJECT = "tty-harness"
 KNOWLEDGE = "fixture-knowledge"
@@ -33,16 +176,16 @@ LAUNCH_COMPANIONS = ("agent-conduct-guidance", "agent-roles")
 
 
 @contextmanager
-def _provider():
-    requests = []
+def _provider() -> Iterator[tuple[int, list[_JsonObject]]]:
+    requests: list[_JsonObject] = []
 
     class Provider(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *_):
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             self.connection.settimeout(3)
-            length = int(self.headers["Content-Length"])
+            length = int(cast(str, self.headers["Content-Length"]))
             if not 0 < length <= 1 << 20:
                 self.send_error(413)
                 return
@@ -95,11 +238,11 @@ def _provider():
         except BaseException as error:
             if failure is None:
                 raise
-            failure.add_note(f"Inference endpoint cleanup: {error}")
+            cast(installed._NoteReceiver, failure).add_note(f"Inference endpoint cleanup: {error}")
 
 
 @contextmanager
-def _capture_failure(root, record_property):
+def _capture_failure(root: Path, record_property: _RecordProperty) -> Iterator[None]:
     try:
         yield
     except BaseException as error:
@@ -135,11 +278,11 @@ def _capture_failure(root, record_property):
                     evidence[path.name] = {"text": text}
             record_property("installed-manager-lifecycle-diagnostics", json.dumps(evidence))
         except Exception as diagnostic_error:
-            error.add_note(f"Lifecycle diagnostic capture: {diagnostic_error}")
+            cast(installed._NoteReceiver, error).add_note(f"Lifecycle diagnostic capture: {diagnostic_error}")
         raise
 
 
-def _terminal_tail(path):
+def _terminal_tail(path: Path) -> str:
     info = path.lstat()
     if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
         raise ValueError("Terminal evidence must be an ordinary owned file")
@@ -150,7 +293,7 @@ def _terminal_tail(path):
         return installed._visible(stream.read(8192))
 
 
-def _manager_ready(output):
+def _manager_ready(output: bytes | bytearray) -> bool:
     visible = installed._visible(output)
     header = visible.rfind("Worktree Manager")
     current = visible[header:] if header >= 0 else ""
@@ -162,14 +305,14 @@ def _manager_ready(output):
     )
 
 
-def _paste_prompt(console, prompt):
+def _paste_prompt(console: _Input, prompt: str) -> None:
     output = bytes(console.output)
     if output.rfind(b"\x1b[?2004h") <= output.rfind(b"\x1b[?2004l"):
         raise RuntimeError("The native dialog has not enabled bracketed paste")
     console.send(b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~")
 
 
-def _require_mux_venue():
+def _require_mux_venue() -> None:
     from agent_remote_driver import windows_mux_processes
     from agent_remote_driver.mux_observation_types import ObservationUnavailable
 
@@ -185,20 +328,21 @@ def _require_mux_venue():
         )
 
 
-def _job_member(console, handle):
+def _job_member(console: _NativeConsole, handle: object) -> bool:
     import ctypes
     from ctypes import wintypes
 
-    query = console.api.IsProcessInJob
+    windows = cast(_WindowsCtypes, ctypes)
+    query = cast(_NativeFunction, console.api.IsProcessInJob)
     query.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
     query.restype = wintypes.BOOL
     inside = wintypes.BOOL()
-    if not query(handle, console.job.handle, ctypes.byref(inside)):
-        raise ctypes.WinError(ctypes.get_last_error())
+    if not query(handle, cast(installed._Job, console.job).handle, ctypes.byref(inside)):
+        raise windows.WinError(windows.get_last_error())
     return bool(inside.value)
 
 
-def _process_arguments(handle, *, owned_root=None):
+def _process_arguments(handle: object, *, owned_root: Path | None = None) -> _ProcessMetadata:
     import ctypes
     from ctypes import wintypes
 
@@ -209,7 +353,8 @@ def _process_arguments(handle, *, owned_root=None):
             ("buffer", ctypes.c_void_p),
         ]
 
-    query = ctypes.WinDLL("ntdll").NtQueryInformationProcess
+    windows = cast(_WindowsCtypes, ctypes)
+    query = windows.WinDLL("ntdll").NtQueryInformationProcess
     query.argtypes = [
         wintypes.HANDLE,
         wintypes.ULONG,
@@ -239,19 +384,19 @@ def _process_arguments(handle, *, owned_root=None):
     ):
         raise RuntimeError("Owned command metadata returned an invalid buffer")
     command = ctypes.wstring_at(value.buffer, value.length // 2)
-    parse = ctypes.WinDLL("shell32").CommandLineToArgvW
+    parse = windows.WinDLL("shell32").CommandLineToArgvW
     parse.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
     parse.restype = ctypes.POINTER(wintypes.LPWSTR)
     count = ctypes.c_int()
     arguments = parse(command, ctypes.byref(count))
     if not arguments:
         raise RuntimeError("Owned command metadata could not be parsed")
-    release = ctypes.WinDLL("kernel32").LocalFree
+    release = windows.WinDLL("kernel32").LocalFree
     release.argtypes, release.restype = [ctypes.c_void_p], ctypes.c_void_p
     try:
         if not 0 < count.value <= 256:
             raise RuntimeError("Owned argument count exceeds its bound")
-        values = [arguments[index] for index in range(count.value)]
+        values: list[str] = [arguments[index] for index in range(count.value)]
     finally:
         release(arguments)
     module = next(
@@ -320,7 +465,7 @@ def _process_arguments(handle, *, owned_root=None):
     }
 
 
-def _case_environment(root, *, environment=None):
+def _case_environment(root: Path, *, environment: dict[str, str] | None = None) -> dict[str, str]:
     env = installed._environment(root) if environment is None else dict(environment)
     identities = {
         "SESSION_ID",
@@ -364,7 +509,7 @@ def _case_environment(root, *, environment=None):
     return env
 
 
-def _events(path, owner):
+def _events(path: Path, owner: Path) -> list[_Event]:
     if not path.resolve().is_relative_to(owner.resolve()):
         raise RuntimeError("Conversation evidence escaped the private Copilot home")
     if not path.is_file():
@@ -378,12 +523,12 @@ def _events(path, owner):
     ]
 
 
-def _message_sequence(events):
+def _message_sequence(events: Sequence[_Event]) -> _MessageSequence:
     labels = {
         **{prompt: f"prompt-{index}" for index, prompt in enumerate(PROMPTS, 1)},
         **{f"LIFECYCLE_REPLY_{index}": f"reply-{index}" for index in range(1, 5)},
     }
-    messages = []
+    messages: list[_JsonObject] = []
     count = 0
     for event in events:
         if event["type"] not in ("user.message", "assistant.message"):
@@ -395,7 +540,7 @@ def _message_sequence(events):
         text = data.get("content")
         encoded = text.encode("utf-8") if isinstance(text, str) else None
         messages.append({
-            "type": event["type"], "fixture_label": labels.get(text) if encoded is not None else None,
+            "type": event["type"], "fixture_label": labels.get(text) if isinstance(text, str) else None,
             "content_bytes": len(encoded) if encoded is not None else None,
             "content_sha256": hashlib.sha256(encoded).hexdigest() if encoded is not None else None,
             "context_handoff_prefix": isinstance(text, str) and text.startswith("[Context Handoff]"),
@@ -406,7 +551,7 @@ def _message_sequence(events):
     return {"messages": messages, "omitted": count - len(messages)}
 
 
-def _assert_conversation_sequence(events, *, system_context=False):
+def _assert_conversation_sequence(events: Sequence[_Event], *, system_context: bool = False) -> None:
     if not system_context:
         assert [
             event["data"]["content"] for event in events if event["type"] == "user.message"
@@ -415,7 +560,8 @@ def _assert_conversation_sequence(events, *, system_context=False):
             event["data"]["content"] for event in events if event["type"] == "assistant.message"
         ] == [f"LIFECYCLE_REPLY_{number}" for number in range(1, 5)]
         return
-    prompts, replies = [], []
+    prompts: list[str] = []
+    replies: list[str | None] = []
     replied = system_since_reply = False
     for event in events:
         if event["type"] == "user.message":
@@ -444,7 +590,7 @@ def _assert_conversation_sequence(events, *, system_context=False):
     )
 
 
-def _prompt_turn_complete(events, prompt, reply):
+def _prompt_turn_complete(events: Sequence[_Event], prompt: str, reply: str) -> bool:
     prompt_seen = reply_seen = False
     for event in events:
         if event["type"] == "user.message" and event["data"].get("content") == prompt:
@@ -461,28 +607,32 @@ def _prompt_turn_complete(events, prompt, reply):
 
 class _Witness:
     def __init__(
-        self, root, env, manager_python, engine, copilot, budget, provider_requests=(),
-        *, mux_binary=None, run=None, launch_timeout=None, system_context=False,
-    ):
+        self, root: Path, env: dict[str, str], manager_python: Path | None,
+        engine: Path | None, copilot: Path | None, budget: _Budget | None,
+        provider_requests: Sequence[_JsonObject] = (),
+        *, mux_binary: str | Path | None = None, run: CommandRunner | None = None,
+        launch_timeout: float | None = None, system_context: bool = False,
+    ) -> None:
         self.root, self.env = root, env
-        self.manager_python = manager_python
-        self.engine, self.copilot = engine, copilot
-        self.budget = budget
-        self.consoles = []
-        self.screens = {}
-        self.native_handles = {}
-        self.history = None
-        self.turn_observation = None
-        self.input_observation = None
+        # Observation-only controls omit runtime inputs they never execute.
+        self.manager_python = cast(Path, manager_python)
+        self.engine, self.copilot = cast(Path, engine), cast(Path, copilot)
+        self.budget = cast(_Budget, budget)
+        self.consoles: list[_NativeConsole] = []
+        self.screens: dict[int, _ScreenState] = {}
+        self.native_handles: dict[_NativeIdentity, tuple[_NativeConsole, object]] = {}
+        self.history: Path | None = None
+        self.turn_observation: _JsonObject | None = None
+        self.input_observation: _JsonObject | None = None
         self.provider_requests = provider_requests
         self.mux_binary = mux_binary
-        self.run = installed._run if run is None else run
+        self.run: CommandRunner = installed._run if run is None else run
         self.launch_timeout = launch_timeout
         self.system_context = system_context
         self.stack = ExitStack()
 
-    def rendered(self, console):
-        import pyte
+    def rendered(self, console: _Output) -> str:
+        pyte = cast(_Pyte, importlib.import_module("pyte"))
 
         key = id(console)
         if key not in self.screens:
@@ -490,20 +640,20 @@ class _Witness:
             screen = pyte.Screen(100, 30)
             # Observe private status queries without generating terminal input.
             screen.report_device_status = lambda *_args, **_kwargs: None
-            self.screens[key] = [console, screen, pyte.ByteStream(screen), 0]
+            self.screens[key] = _ScreenState(console, screen, pyte.ByteStream(screen))
         state = self.screens[key]
         data = bytes(console.output)
-        if not state[3] <= len(data) <= 1 << 20:
+        if not state.offset <= len(data) <= 1 << 20:
             raise RuntimeError("Rendered ConPTY evidence was truncated or exceeded its bound")
-        state[2].feed(data[state[3]:])
-        state[3] = len(data)
-        return "\n".join(state[1].display)
+        state.stream.feed(data[state.offset:])
+        state.offset = len(data)
+        return "\n".join(state.screen.display)
 
-    def _new_dialog_grid(self, console):
+    def _new_dialog_grid(self, console: _Output) -> tuple[_Screen, list[str]] | None:
         frame = self.rendered(console)
         if "New worktree" not in frame or "Creates on tty-fixture Win" not in frame:
             return None
-        screen = self.screens[id(console)][1]
+        screen = self.screens[id(console)].screen
         rows = [
             "".join(
                 screen.buffer[row][column].data
@@ -514,7 +664,7 @@ class _Witness:
         ]
         return screen, rows
 
-    def _new_create_focused(self, console):
+    def _new_create_focused(self, console: _Output) -> bool:
         grid = self._new_dialog_grid(console)
         self.input_observation = {"phase": "create-focus", "dialog": grid is not None}
         if grid is None:
@@ -540,7 +690,7 @@ class _Witness:
             and all(cell.bg != "ffaf00" and cell.fg != create[0].fg for cell in cancel)
         )
 
-    def _new_prompt_focused(self, console):
+    def _new_prompt_focused(self, console: _Output) -> bool:
         grid = self._new_dialog_grid(console)
         self.input_observation = {"phase": "prompt-focus", "dialog": grid is not None}
         if grid is None:
@@ -571,7 +721,7 @@ class _Witness:
         )
         return focused
 
-    def wait(self, check, label, timeout=30):
+    def wait(self, check: Callable[[], _T | None], label: str, timeout: float = 30) -> _T:
         deadline = min(time.monotonic() + timeout, self.budget.execution_deadline)
         while time.monotonic() < deadline:
             value = check()
@@ -597,7 +747,7 @@ class _Witness:
                 screens += f"\nInstalled-liveness diagnostic: {diagnostic_error}"
         raise TimeoutError(f"{label}\n{screens}")
 
-    def _capture_liveness(self):
+    def _capture_liveness(self) -> str:
         program = """
 import json,sys,time
 from pathlib import Path
@@ -657,10 +807,12 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             timeout=10,
         )
 
-    def _capture_processes(self):
-        from agent_procutil._windows_caller_owned import _job_pids
+    def _capture_processes(self) -> None:
+        from agent_procutil._windows_caller_owned import _job_pids as job_pids
 
-        rows = []
+        _job_pids = cast(Callable[[object], list[int]], job_pids)
+
+        rows: list[_JsonObject] = []
         for console in self.consoles:
             if console.job is None or not console.job.handle:
                 continue
@@ -704,7 +856,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             encoding="utf-8",
         )
 
-    def manager(self):
+    def manager(self) -> _NativeConsole:
         stub = Path(self.env["USERPROFILE"]) / ".local" / "bin" / (PROJECT + ".cmd")
         console = self.stack.enter_context(
             installed._owned_console(
@@ -720,10 +872,12 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
         )
         return console
 
-    def native(self):
-        from agent_procutil._windows_caller_owned import _job_pids
+    def native(self) -> dict[_NativeIdentity, tuple[_NativeConsole, object]]:
+        from agent_procutil._windows_caller_owned import _job_pids as job_pids
 
-        selected = {}
+        _job_pids = cast(Callable[[object], list[int]], job_pids)
+
+        selected: dict[_NativeIdentity, tuple[_NativeConsole, object]] = {}
         for console in self.consoles:
             if console.job is None or not console.job.handle:
                 continue
@@ -760,13 +914,13 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                     raise
         return selected
 
-    def one_native(self):
+    def one_native(self) -> _NativeIdentity | None:
         selected = self.native()
         if not selected:
             return None
         error = RuntimeError(f"Manager admitted duplicate native CLI owners: {list(selected)}")
         try:
-            rows = [
+            rows: list[_NativeRow] = [
                 {"pid": pid, "birth": birth, **_process_arguments(handle, owned_root=self.root)}
                 for (pid, birth), (_console, handle) in sorted(selected.items())[:16]
             ]
@@ -802,10 +956,10 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 ):
                     return owner["pid"], owner["birth"]
         except Exception as diagnostic_error:
-            error.add_note(f"Native owner observation: {diagnostic_error}")
+            cast(installed._NoteReceiver, error).add_note(f"Native owner observation: {diagnostic_error}")
         raise error
 
-    def _turn_started(self, prompt, number):
+    def _turn_started(self, prompt: str, number: int) -> bool:
         paths = (
             [self.history] if self.history else sorted(
                 (Path(self.env["COPILOT_HOME"]) / "session-state").glob("*/events.jsonl"),
@@ -821,7 +975,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
         }
         return observed
 
-    def turn(self, prompt, number, console):
+    def turn(self, prompt: str, number: int, console: _Output) -> _NativeIdentity:
         launch_elapsed = None
         launch_timeout = getattr(self, "launch_timeout", None)
         if launch_timeout is not None and number in (1, 4):
@@ -836,7 +990,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             )
             launch_elapsed = time.monotonic() - started
 
-        def finished():
+        def finished() -> _NativeIdentity | None:
             paths = (
                 [self.history]
                 if self.history
@@ -845,7 +999,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 )
             )
             matches = []
-            histories = []
+            histories: list[_JsonObject] = []
             for path in paths:
                 events = _events(path, Path(self.env["COPILOT_HOME"]))
                 texts = [e["data"]["content"] for e in events if e["type"] == "user.message"]
@@ -900,7 +1054,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
 
         return self.wait(finished, f"Native conversation did not finish {prompt}", timeout=60)
 
-    def _reply_in_pane(self, number):
+    def _reply_in_pane(self, number: int) -> bool:
         from plugin_test_command_safety import validate_private_mux_args
         from plugin_test_containment import SANDBOX_ENV
 
@@ -924,7 +1078,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
         )
         return f"LIFECYCLE_REPLY_{number}" in rendered
 
-    def records(self, label):
+    def records(self, label: str) -> _JsonObject:
         code = (
             "import json;from agent_worktrees import config,tracking;"
             f"rows=tracking.list_records(config.tracking_dir({PROJECT!r}));"
@@ -948,13 +1102,13 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
         (record,) = rows
         if (
             not Path(record["path"]).resolve().is_relative_to(self.root.resolve())
-            or record["head"] != self.history.parent.name
-            or record["sessions"] != [self.history.parent.name]
+            or record["head"] != cast(Path, self.history).parent.name
+            or record["sessions"] != [cast(Path, self.history).parent.name]
         ):
             raise RuntimeError(f"Native worktree/head/history binding is inconsistent: {record}")
-        return record
+        return cast(_JsonObject, record)
 
-    def select(self, console, record, verb):
+    def select(self, console: _Input, record: _JsonObject, verb: str) -> None:
         self.wait(
             lambda: record["id"][-4:] in installed._visible(console.output),
             "The created worktree did not appear in real Manager discovery",
@@ -973,7 +1127,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             self.resume_launch_started = time.monotonic()
         console.send(b"\r")
 
-        def attached():
+        def attached() -> bool:
             screen = self.rendered(console)
             return "Start of Prompt Indicator" in screen and "Interactive" in screen
 
@@ -986,9 +1140,9 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 timeout=max(0, launch_timeout - (time.monotonic() - self.resume_launch_started)),
             )
 
-    def _action_location(self, console, label):
+    def _action_location(self, console: _Output, label: str) -> tuple[int, int] | None:
         self.rendered(console)
-        screen = self.screens[id(console)][1]
+        screen = self.screens[id(console)].screen
         for row in range(screen.lines):
             cells = [screen.buffer[row][column] for column in range(screen.columns)]
             text = "".join(cell.data if len(cell.data) == 1 else " " for cell in cells)
@@ -999,7 +1153,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 offset += len(segment) + 1
         return None
 
-    def _activate_refresh(self, console):
+    def _activate_refresh(self, console: _Input) -> None:
         target = self.wait(
             lambda: self._action_location(console, "Refresh"),
             "Real Manager discovery did not offer Refresh",
@@ -1012,21 +1166,21 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             raise RuntimeError("The real action list cannot be safely navigated to Refresh")
         console.send(b"\x1b[H" + b"\x1b[B" * (target[0] - min(starts)[0]))
 
-        def highlighted():
+        def highlighted() -> bool:
             location = self._action_location(console, "Refresh")
             if location is None:
                 return False
             row, column = location
-            screen = self.screens[id(console)][1]
+            screen = self.screens[id(console)].screen
             return all(screen.buffer[row][x].bold for x in range(column, column + len("Refresh")))
 
         self.wait(highlighted, "Real Manager did not highlight the safe Refresh action")
         console.send(b"\r")
 
-    def _refresh_before_resume(self, console, record):
+    def _refresh_before_resume(self, console: _Input, record: _JsonObject) -> None:
         self._activate_refresh(console)
 
-        def stopped():
+        def stopped() -> bool:
             screen = self.rendered(console)
             return (
                 "Worktree actions" not in screen
@@ -1043,17 +1197,19 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
             "Real Manager did not reopen the refreshed worktree actions",
         )
 
-    def close_cli(self, console, identity):
+    def close_cli(self, console: _NativeConsole, identity: _NativeIdentity) -> None:
         import ctypes
         from ctypes import wintypes
 
         owner, handle = self.native_handles[identity]
+        windows = cast(_WindowsCtypes, ctypes)
         before = len(console.output)
         console.send(b"/exit\r")
         self.wait(lambda: owner.exited(handle), "Copilot did not exit normally")
         code = wintypes.DWORD()
-        if not owner.api.GetExitCodeProcess(handle, ctypes.byref(code)):
-            raise ctypes.WinError(ctypes.get_last_error())
+        get_exit_code = cast(_NativeFunction, owner.api.GetExitCodeProcess)
+        if not get_exit_code(handle, ctypes.byref(code)):
+            raise windows.WinError(windows.get_last_error())
         if code.value != 0:
             raise RuntimeError(f"The native Copilot process exited with code {code.value}")
         self.wait(
@@ -1074,11 +1230,14 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
         if console.wait(15000) != 0:
             raise RuntimeError("The normal native/Manager exit returned nonzero")
 
-    def __enter__(self):
+    def __enter__(self) -> _Witness:
         return self
 
-    def __exit__(self, *error):
-        failure = error[1]
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        failure = exc_value
         if failure is not None:
             for index, console in enumerate(self.consoles):
                 try:
@@ -1086,9 +1245,9 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                         self.rendered(console), encoding="utf-8",
                     )
                 except Exception as diagnostic_error:
-                    failure.add_note(f"Rendered terminal diagnostic: {diagnostic_error}")
+                    cast(installed._NoteReceiver, failure).add_note(f"Rendered terminal diagnostic: {diagnostic_error}")
         try:
-            return self.stack.__exit__(*error)
+            return self.stack.__exit__(exc_type, exc_value, traceback)
         except BaseException as cleanup_error:
             failure = cleanup_error
             raise
@@ -1101,7 +1260,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 except OSError as write_error:
                     if failure is None:
                         raise
-                    failure.add_note(f"Input diagnostic write: {write_error}")
+                    cast(installed._NoteReceiver, failure).add_note(f"Input diagnostic write: {write_error}")
             if self.turn_observation is not None:
                 try:
                     if self.history is not None:
@@ -1114,7 +1273,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 except Exception as write_error:
                     if failure is None:
                         raise
-                    failure.add_note(f"Conversation diagnostic write: {write_error}")
+                    cast(installed._NoteReceiver, failure).add_note(f"Conversation diagnostic write: {write_error}")
             for index, console in enumerate(self.consoles):
                 try:
                     (self.root / "diagnostics" / f"lifecycle-{index}.terminal.txt").write_bytes(
@@ -1123,7 +1282,7 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                 except OSError as write_error:
                     if failure is None:
                         raise
-                    failure.add_note(f"Terminal diagnostic write: {write_error}")
+                    cast(installed._NoteReceiver, failure).add_note(f"Terminal diagnostic write: {write_error}")
             if failure is not None:
                 from plugin_test_containment import UnreapedProcessError
 
@@ -1133,9 +1292,9 @@ print(json.dumps({"diagnostic":"failure-only-current-roster-before-teardown",
                     except UnreapedProcessError:
                         raise
                     except BaseException as diagnostic_error:
-                        failure.add_note(f"Bootstrap diagnostic: {diagnostic_error}")
+                        cast(installed._NoteReceiver, failure).add_note(f"Bootstrap diagnostic: {diagnostic_error}")
 
-    def _diagnose_bootstrap(self):
+    def _diagnose_bootstrap(self) -> None:
         program = """
 import json,sys
 from pathlib import Path
@@ -1179,10 +1338,10 @@ print(json.dumps(data),flush=True)
         )
 
 
-def _identity():
+def _identity() -> _JsonObject:
     from agent_procutil import no_window_kwargs
 
-    def git(argument):
+    def git(argument: str) -> str:
         return subprocess.run(
             ["git", "-C", str(installed.REPO), "rev-parse", argument],
             check=True,
@@ -1210,7 +1369,10 @@ def _identity():
     }
 
 
-def _project(root, env, engine, copilot, *, profile=None, run=None):
+def _project(
+    root: Path, env: dict[str, str], engine: Path, copilot: Path, *,
+    profile: _JsonObject | None = None, run: CommandRunner | None = None,
+) -> None:
     run = installed._run if run is None else run
     project = root / PROJECT
     project.mkdir(exist_ok=profile is not None)
@@ -1360,7 +1522,7 @@ def _project(root, env, engine, copilot, *, profile=None, run=None):
         )
 
 
-def _stage_launch_companions(root, identity, deadline):
+def _stage_launch_companions(root: Path, identity: _JsonObject, deadline: float | None) -> None:
     import prepare_runtime_source as preparation
     import versioned_runtime_source as provenance
 
@@ -1386,7 +1548,7 @@ def _stage_launch_companions(root, identity, deadline):
             *(f"plugins/{name}" for name in LAUNCH_COMPANIONS),
             deadline=deadline, output=output,
         )
-    pointers = []
+    pointers: list[Path] = []
     preparation._extract_archive(
         archive, snapshot, deadline=deadline, file_pointer_candidates=pointers,
     )
@@ -1472,7 +1634,7 @@ def _stage_launch_companions(root, identity, deadline):
     )
 
 
-def test_lifecycle_diagnostics_retain_the_constructor_refusal(tmp_path):
+def test_lifecycle_diagnostics_retain_the_constructor_refusal(tmp_path: Path) -> None:
     diagnostics = tmp_path / "diagnostics"
     diagnostics.mkdir()
     (diagnostics / "install-engine.stderr.txt").write_text(
@@ -1486,7 +1648,7 @@ def test_lifecycle_diagnostics_retain_the_constructor_refusal(tmp_path):
     }
     for name, value in suite_diagnostics.items():
         (diagnostics / name).write_text(value, encoding="utf-8")
-    records = []
+    records: list[tuple[str, str]] = []
     with pytest.raises(RuntimeError, match="outer construction failed"):
         with _capture_failure(tmp_path, lambda name, value: records.append((name, value))):
             raise RuntimeError("outer construction failed")
@@ -1499,7 +1661,7 @@ def test_lifecycle_diagnostics_retain_the_constructor_refusal(tmp_path):
 
 @pytest.mark.timeout(180)
 @pytest.mark.skipif(os.name != "nt", reason="Installed-core preparation uses native Windows")
-def test_lifecycle_launch_companions_use_the_real_candidate_archive():
+def test_lifecycle_launch_companions_use_the_real_candidate_archive() -> None:
     from plugin_test_containment import SANDBOX_ENV, TestSandbox
 
     identity = _identity()
@@ -1521,8 +1683,8 @@ def test_lifecycle_launch_companions_use_the_real_candidate_archive():
     "refusal", [None, "catalogue", "manifest", "source-path", "runtime-companion", "missing-companion"],
 )
 def test_lifecycle_stages_exact_launch_companions_without_replacing_selected_runtimes(
-    tmp_path, monkeypatch, refusal,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: str | None,
+) -> None:
     import prepare_runtime_source as preparation
 
     identity = {"candidate_commit": "a" * 40, "source_commit": "b" * 40}
@@ -1574,7 +1736,9 @@ def test_lifecycle_stages_exact_launch_companions_without_replacing_selected_run
     if refusal == "catalogue":
         (root / "payloads" / catalog).write_text('{"plugins":[]}', encoding="utf-8")
 
-    def archive(_source, *arguments, deadline, output):
+    def archive(
+        _source: Path, *arguments: str, deadline: float | None, output: BinaryIO,
+    ) -> None:
         assert arguments[:6] == (
             "-c", "tar.umask=0022", "-c", "core.eol=lf", "archive", "--format=tar",
         )
@@ -1585,7 +1749,10 @@ def test_lifecycle_stages_exact_launch_companions_without_replacing_selected_run
         }
         output.write(b"owned archive")
 
-    def extract(_archive, destination, *, deadline, file_pointer_candidates):
+    def extract(
+        _archive: Path, destination: Path, *, deadline: float | None,
+        file_pointer_candidates: list[Path],
+    ) -> None:
         assert deadline is None
         assert file_pointer_candidates == []
         shutil.copytree(frozen, destination, dirs_exist_ok=True)
@@ -1618,7 +1785,9 @@ def test_lifecycle_stages_exact_launch_companions_without_replacing_selected_run
 
 
 @pytest.mark.parametrize("phase", ["missing-history", "unfinished", "rendering-only"])
-def test_lifecycle_conversation_diagnostics_distinguish_history_from_rendering(tmp_path, phase):
+def test_lifecycle_conversation_diagnostics_distinguish_history_from_rendering(
+    tmp_path: Path, phase: str,
+) -> None:
     from types import SimpleNamespace
 
     (tmp_path / "diagnostics").mkdir()
@@ -1626,7 +1795,7 @@ def test_lifecycle_conversation_diagnostics_distinguish_history_from_rendering(t
     history = home / "session-state" / "fixture-session" / "events.jsonl"
     if phase != "missing-history":
         history.parent.mkdir(parents=True)
-        events = [{"type": "user.message", "data": {"content": PROMPTS[0]}}]
+        events: list[_Event] = [{"type": "user.message", "data": {"content": PROMPTS[0]}}]
         if phase == "rendering-only":
             events += [
                 {"type": "assistant.message", "data": {"content": "LIFECYCLE_REPLY_1"}},
@@ -1635,15 +1804,15 @@ def test_lifecycle_conversation_diagnostics_distinguish_history_from_rendering(t
         history.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
     requests = [{"private": "request content must not enter diagnostics"}]
     witness = _Witness(tmp_path, {"COPILOT_HOME": str(home)}, None, None, None, None, requests)
-    witness._diagnose_bootstrap = lambda: None
-    witness._reply_in_pane = lambda _number: False
+    setattr(witness, "_diagnose_bootstrap", lambda: None)
+    setattr(witness, "_reply_in_pane", lambda _number: False)
 
-    def wait(check, *_args, **_kwargs):
+    def wait(check: Callable[[], object], *_args: object, **_kwargs: object) -> NoReturn:
         assert check() is None
         raise TimeoutError("fixture unfinished turn")
 
-    witness.wait = wait
-    records = []
+    setattr(witness, "wait", wait)
+    records: list[_JsonObject] = []
     with pytest.raises(TimeoutError, match="fixture unfinished turn"):
         with _capture_failure(tmp_path, lambda _name, value: records.append(json.loads(value))), witness:
             witness.turn(PROMPTS[0], 1, SimpleNamespace(output=b"cursor redraw"))
@@ -1670,8 +1839,9 @@ def test_lifecycle_conversation_diagnostics_distinguish_history_from_rendering(t
     [(None, 200, False, 60), (120, 200, True, 100), (120, 95, False, 100)],
 )
 def test_fullsuite_launch_phase_preserves_core_turn_and_outer_deadlines(
-    tmp_path, monkeypatch, launch_timeout, execution_deadline, completed, expected_clock,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, launch_timeout: float | None,
+    execution_deadline: float, completed: bool, expected_clock: int,
+) -> None:
     from types import SimpleNamespace
 
     home = tmp_path / "copilot-home"
@@ -1682,14 +1852,14 @@ def test_fullsuite_launch_phase_preserves_core_turn_and_outer_deadlines(
         tmp_path, {"COPILOT_HOME": str(home)}, None, None, None,
         SimpleNamespace(execution_deadline=execution_deadline), launch_timeout=launch_timeout,
     )
-    witness._capture_processes = lambda: None
-    witness.one_native = lambda: (101, 1001)
+    setattr(witness, "_capture_processes", lambda: None)
+    setattr(witness, "one_native", lambda: (101, 1001))
 
-    def sleep(_seconds):
+    def sleep(_seconds: float) -> None:
         clock[0] += 10
         if clock[0] >= 90:
             assert witness.history is None
-            events = [{"type": "user.message", "data": {"content": PROMPTS[0]}}]
+            events: list[_Event] = [{"type": "user.message", "data": {"content": PROMPTS[0]}}]
             if clock[0] >= 100:
                 events.extend([
                     {"type": "assistant.message", "data": {"content": "LIFECYCLE_REPLY_1"}},
@@ -1705,7 +1875,7 @@ def test_fullsuite_launch_phase_preserves_core_turn_and_outer_deadlines(
     if completed:
         assert witness.turn(PROMPTS[0], 1, console) == (101, 1001)
         assert witness.history == history
-        assert witness.turn_observation["launch_readiness_seconds"] == 90
+        assert cast(_JsonObject, witness.turn_observation)["launch_readiness_seconds"] == 90
     else:
         with pytest.raises(TimeoutError, match="Native conversation did not finish"):
             witness.turn(PROMPTS[0], 1, console)
@@ -1713,8 +1883,8 @@ def test_fullsuite_launch_phase_preserves_core_turn_and_outer_deadlines(
 
 
 @pytest.mark.parametrize("extra", ("private fixture text", "[Context Handoff] private fixture text"))
-def test_lifecycle_message_sequence_classifies_extras_without_retaining_content(extra):
-    events = [
+def test_lifecycle_message_sequence_classifies_extras_without_retaining_content(extra: str) -> None:
+    events: list[_Event] = [
         {"type": "user.message", "data": {"content": PROMPTS[0]}},
         {"type": "user.message", "data": {"content": extra, "source": "hook"}},
         {"type": "assistant.message", "data": {"content": "LIFECYCLE_REPLY_1"}},
@@ -1739,8 +1909,8 @@ def test_lifecycle_message_sequence_classifies_extras_without_retaining_content(
 @pytest.mark.parametrize("number", [1, 4])
 @pytest.mark.skipif(os.name != "nt", reason="The native pane uses a private PSMux namespace")
 def test_lifecycle_completed_turn_uses_the_bound_rendered_pane(
-    tmp_path, rendered, persisted, number,
-):
+    tmp_path: Path, rendered: bool, persisted: bool, number: int,
+) -> None:
     from types import SimpleNamespace
     from plugin_test_command_safety import private_mux_args
 
@@ -1760,23 +1930,26 @@ def test_lifecycle_completed_turn_uses_the_bound_rendered_pane(
     witness = _Witness(tmp_path, {
         "COPILOT_HOME": str(home), "COPILOT_DRIVER_PSMUX_NAMESPACE": namespace[1],
     }, None, None, None, None, mux_binary=binary)
-    witness.wait = lambda check, *_args, **_kwargs: check()
+    setattr(witness, "wait", lambda check, *_args, **_kwargs: check())
     if number == 4:
         witness.history = history
-    owners = []
+    owners: list[Path | None] = []
 
-    def owner():
+    def owner() -> tuple[str, str]:
         owners.append(witness.history)
         return "native-pid", "native-birth"
 
-    witness.one_native = owner
-    calls = []
+    setattr(witness, "one_native", owner)
+    calls: list[Sequence[str | Path]] = []
 
-    def records(_label):
+    def records(_label: str) -> _JsonObject:
         assert witness.history == history
         return {"id": "fixture-worktree"}
 
-    def capture(command, env, cwd, diagnostics, label, timeout):
+    def capture(
+        command: Sequence[str | Path], env: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float | None = None,
+    ) -> str:
         from plugin_test_command_safety import command_problem
         from plugin_test_containment import SANDBOX_ENV
 
@@ -1787,7 +1960,7 @@ def test_lifecycle_completed_turn_uses_the_bound_rendered_pane(
         ) is None
         return f"LIFECYCLE_REPLY_{number}" if rendered else "unfinished"
 
-    witness.records = records
+    setattr(witness, "records", records)
     witness.run = capture
     result = witness.turn(PROMPTS[number - 1], number, SimpleNamespace(output=b"cursor redraw"))
     assert result == (("native-pid", "native-birth") if rendered and persisted else None)
@@ -1804,8 +1977,8 @@ def test_lifecycle_completed_turn_uses_the_bound_rendered_pane(
         "unpaired-reply", "wrong-reply", "missing-reply",
     ),
 )
-def test_fullsuite_history_requires_operator_continuity_despite_runtime_system_context(fault):
-    events = []
+def test_fullsuite_history_requires_operator_continuity_despite_runtime_system_context(fault: str) -> None:
+    events: list[_Event] = []
     for index, prompt in enumerate(PROMPTS, 1):
         events.append({"type": "user.message", "data": {"content": prompt}})
         if index == 1:
@@ -1844,8 +2017,10 @@ def test_fullsuite_history_requires_operator_continuity_despite_runtime_system_c
 
 
 @pytest.mark.parametrize("previous_ends,completed", ((0, False), (4, False), (4, True)))
-def test_fullsuite_completion_cannot_borrow_earlier_system_turn_ends(previous_ends, completed):
-    events = [
+def test_fullsuite_completion_cannot_borrow_earlier_system_turn_ends(
+    previous_ends: int, completed: bool,
+) -> None:
+    events: list[_Event] = [
         *[{"type": "assistant.turn_end", "data": {}} for _ in range(previous_ends)],
         {"type": "user.message", "data": {"content": PROMPTS[3]}},
         {"type": "assistant.message", "data": {"content": "LIFECYCLE_REPLY_4"}},
@@ -1858,28 +2033,29 @@ def test_fullsuite_completion_cannot_borrow_earlier_system_turn_ends(previous_en
 @pytest.mark.skipif(os.name != "nt", reason="Native retained process attribution")
 @pytest.mark.parametrize("exited_after_query", (False, True))
 def test_lifecycle_native_image_failure_ignores_only_the_same_confirmed_exited_handle(
-    tmp_path, monkeypatch, exited_after_query,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exited_after_query: bool,
+) -> None:
     from types import SimpleNamespace
     import agent_procutil._windows_caller_owned as windows
 
     handle, job = object(), object()
-    checks, closed = [], []
+    checks: list[int] = []
+    closed: list[object] = []
     error = PermissionError("controlled native image teardown")
-    error.winerror = 5
+    setattr(error, "winerror", 5)
     console = SimpleNamespace(job=SimpleNamespace(handle=job), handles={handle}, pin=lambda _: handle)
 
-    def exited(actual, timeout=0):
+    def exited(actual: object, timeout: int = 0) -> bool:
         assert actual is handle
         checks.append(timeout)
         return exited_after_query if timeout else False
 
-    def close(actual):
+    def close(actual: object) -> None:
         assert actual is handle
         closed.append(actual)
         console.handles.remove(actual)
 
-    def unreadable(actual_console, actual_handle):
+    def unreadable(actual_console: _NativeConsole, actual_handle: object) -> NoReturn:
         assert actual_console is console and actual_handle is handle
         raise error
 
@@ -1900,25 +2076,26 @@ def test_lifecycle_native_image_failure_ignores_only_the_same_confirmed_exited_h
     assert not witness.native_handles
 
 
-def test_lifecycle_diagnostic_write_cannot_mask_unsettled_custody(tmp_path):
+def test_lifecycle_diagnostic_write_cannot_mask_unsettled_custody(tmp_path: Path) -> None:
     from plugin_test_containment import UnreapedProcessError
 
     original = UnreapedProcessError("fixture-owned process remains unobserved")
 
-    def failed_report(*_):
+    def failed_report(*_: object) -> NoReturn:
         raise OSError("controlled diagnostic write failure")
 
     with pytest.raises(UnreapedProcessError) as caught:
         with _capture_failure(tmp_path, failed_report):
             raise original
     assert caught.value is original
-    assert any("controlled diagnostic write failure" in note for note in original.__notes__)
+    assert any("controlled diagnostic write failure" in note
+               for note in cast(_ExceptionNotes, original).__notes__)
 
 
 @pytest.mark.parametrize("scope", ["private", "foreign-row", "foreign-engine"])
 def test_lifecycle_liveness_diagnostic_uses_private_installed_reads_and_redacts_bindings(
-    tmp_path, monkeypatch, scope,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str,
+) -> None:
     import contextlib
     import io
     from worktree_manager import engine_client, harness_state
@@ -1936,9 +2113,9 @@ def test_lifecycle_liveness_diagnostic_uses_private_installed_reads_and_redacts_
         },
         "unrelated": "private-field-secret",
     }
-    calls = []
+    calls: list[str] = []
 
-    def rows(project, **options):
+    def rows(project: str, **options: bool) -> list[_JsonObject]:
         assert project == PROJECT and options == {
             "classify": True, "mux_details": True, "fresh": True,
         }
@@ -1951,12 +2128,12 @@ def test_lifecycle_liveness_diagnostic_uses_private_installed_reads_and_redacts_
     monkeypatch.setattr(harness_state, "home", lambda: tmp_path / "manager")
     monkeypatch.setattr(context, "set_project", lambda _project: None)
 
-    def run(argv, *_args, **_kwargs):
+    def run(argv: Sequence[str | Path], *_args: object, **_kwargs: object) -> str:
         with monkeypatch.context() as patch:
             patch.setattr(sys, "argv", ["-c", str(tmp_path), PROJECT])
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                exec(argv[argv.index("-c") + 1], {})
+                exec(cast(str, argv[argv.index("-c") + 1]), {})
             return output.getvalue()
 
     monkeypatch.setattr(installed, "_run", run)
@@ -1974,7 +2151,7 @@ def test_lifecycle_liveness_diagnostic_uses_private_installed_reads_and_redacts_
         assert calls == ([] if scope == "foreign-engine" else [PROJECT])
 
 
-def test_lifecycle_liveness_diagnostic_cannot_hide_unsettled_processes(tmp_path):
+def test_lifecycle_liveness_diagnostic_cannot_hide_unsettled_processes(tmp_path: Path) -> None:
     from types import SimpleNamespace
     from plugin_test_containment import UnreapedProcessError
 
@@ -1983,13 +2160,13 @@ def test_lifecycle_liveness_diagnostic_cannot_hide_unsettled_processes(tmp_path)
         SimpleNamespace(execution_deadline=time.monotonic() - 1),
     )
     witness.history = tmp_path / "events.jsonl"
-    witness._capture_processes = lambda: None
+    setattr(witness, "_capture_processes", lambda: None)
     original = UnreapedProcessError("private diagnostic process remains unsettled")
 
-    def capture():
+    def capture() -> NoReturn:
         raise original
 
-    witness._capture_liveness = capture
+    setattr(witness, "_capture_liveness", capture)
     with pytest.raises(UnreapedProcessError) as caught:
         witness.wait(lambda: None, "unfinished UI")
     assert caught.value is original
@@ -1997,8 +2174,8 @@ def test_lifecycle_liveness_diagnostic_cannot_hide_unsettled_processes(tmp_path)
 
 @pytest.mark.parametrize("metadata_available", [True, False])
 def test_lifecycle_duplicate_native_observation_does_not_weaken_the_refusal(
-    tmp_path, monkeypatch, metadata_available,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_available: bool,
+) -> None:
     history = tmp_path / "session-state" / "fixture-session" / "events.jsonl"
     history.parent.mkdir(parents=True)
     (history.parent / "inuse.101.lock").touch()
@@ -2006,9 +2183,9 @@ def test_lifecycle_duplicate_native_observation_does_not_weaken_the_refusal(
     witness = _Witness(tmp_path, {}, None, None, None, None)
     witness.history = history
     witness.turn_observation = {}
-    witness.native = lambda: {(101, "first-birth"): (None, 1), (102, "second-birth"): (None, 2)}
+    setattr(witness, "native", lambda: {(101, "first-birth"): (None, 1), (102, "second-birth"): (None, 2)})
 
-    def metadata(_handle, **_kwargs):
+    def metadata(_handle: object, **_kwargs: object) -> _JsonObject:
         if not metadata_available:
             raise OSError("controlled metadata unavailable")
         return {"native_cli_flags": ["--interactive"]}
@@ -2020,16 +2197,19 @@ def test_lifecycle_duplicate_native_observation_does_not_weaken_the_refusal(
         assert [row["pid"] for row in witness.turn_observation["native_candidates"]] == [101, 102]
         assert witness.turn_observation["history_lock_pids"] == [101]
     else:
-        assert any("metadata unavailable" in note for note in caught.value.__notes__)
+        assert any("metadata unavailable" in note
+                   for note in cast(_ExceptionNotes, caught.value).__notes__)
 
 
 @pytest.mark.parametrize("exit_code", [0, 7])
-def test_lifecycle_normal_exit_checks_the_native_owner_not_only_the_wrapper(tmp_path, exit_code):
+def test_lifecycle_normal_exit_checks_the_native_owner_not_only_the_wrapper(
+    tmp_path: Path, exit_code: int,
+) -> None:
     from types import SimpleNamespace
 
-    sent = []
+    sent: list[bytes] = []
 
-    def native_code(_handle, result):
+    def native_code(_handle: object, result: _DwordReference) -> bool:
         result._obj.value = exit_code
         return True
 
@@ -2045,10 +2225,10 @@ def test_lifecycle_normal_exit_checks_the_native_owner_not_only_the_wrapper(tmp_
     identity = (101, 1000)
     witness.native_handles[identity] = (owner, object())
 
-    def wait(check, _label):
+    def wait(check: Callable[[], object], _label: str) -> None:
         assert check()
 
-    witness.wait = wait
+    setattr(witness, "wait", wait)
     if exit_code:
         with pytest.raises(RuntimeError, match="native Copilot process exited with code 7"):
             witness.close_cli(console, identity)
@@ -2064,7 +2244,9 @@ def test_lifecycle_normal_exit_checks_the_native_owner_not_only_the_wrapper(tmp_
         "single-qualified", "single-unbound-owner", "single-no-history",
     ],
 )
-def test_lifecycle_excludes_only_the_proven_native_extension_host(tmp_path, monkeypatch, case):
+def test_lifecycle_excludes_only_the_proven_native_extension_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
     history = tmp_path / "session-state" / "fixture-session" / "events.jsonl"
     history.parent.mkdir(parents=True)
     if case not in {"unbound-owner", "single-unbound-owner", "single-no-history"}:
@@ -2088,9 +2270,9 @@ def test_lifecycle_excludes_only_the_proven_native_extension_host(tmp_path, monk
         selected.pop(owner)
     if case.startswith("single-"):
         selected.pop((102, 1100))
-    witness.native = lambda: selected
+    setattr(witness, "native", lambda: selected)
 
-    def metadata(handle, *, owned_root):
+    def metadata(handle: object, *, owned_root: Path) -> _JsonObject:
         assert owned_root == tmp_path
         return {
             "parent_pid": 999 if case == "foreign-parent" else 101,
@@ -2105,12 +2287,12 @@ def test_lifecycle_excludes_only_the_proven_native_extension_host(tmp_path, monk
             witness.one_native()
         if case in {"single-unbound-owner", "single-no-history"}:
             assert any("not bound to the verified conversation" in note
-                       for note in caught.value.__notes__)
+                       for note in cast(_ExceptionNotes, caught.value).__notes__)
 
 
 def test_lifecycle_environment_drops_foreign_identity_mux_and_inference_credentials(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     inherited = {
         "USERPROFILE": str(tmp_path / "h"),
         "COPILOT_EXTENSIONS_TEST_CONTAINED": "1",
@@ -2148,7 +2330,7 @@ def test_lifecycle_environment_drops_foreign_identity_mux_and_inference_credenti
     assert inherited["PSMUX_DATA_DIR"] == "foreign-mux-directory"
 
 
-def test_lifecycle_manager_readiness_requires_the_current_project_binding():
+def test_lifecycle_manager_readiness_requires_the_current_project_binding() -> None:
     bound = b"Worktree Manager | host tty-fixture | tty-harness\nWORKTREES"
     loading = b"Worktree Manager | host pending\nWORKTREES"
     alternate = b"\x1b[?1049h"
@@ -2158,7 +2340,7 @@ def test_lifecycle_manager_readiness_requires_the_current_project_binding():
 
 
 @pytest.mark.parametrize("case", ["split-redraw", "stale-frame"])
-def test_lifecycle_prompt_observation_uses_the_current_rendered_screen(tmp_path, case):
+def test_lifecycle_prompt_observation_uses_the_current_rendered_screen(tmp_path: Path, case: str) -> None:
     from types import SimpleNamespace
 
     witness = _Witness(tmp_path, {}, None, None, None, None)
@@ -2178,10 +2360,10 @@ def test_lifecycle_prompt_observation_uses_the_current_rendered_screen(tmp_path,
 
 
 @pytest.mark.parametrize("mode", [b"", b"\x1b[?2004h\x1b[?2004l", b"\x1b[?2004l\x1b[?2004h"])
-def test_lifecycle_prompt_paste_requires_the_actual_terminal_mode(mode):
+def test_lifecycle_prompt_paste_requires_the_actual_terminal_mode(mode: bytes) -> None:
     from types import SimpleNamespace
 
-    sent = []
+    sent: list[bytes] = []
     console = SimpleNamespace(output=mode, send=sent.append)
     if mode.endswith(b"\x1b[?2004h"):
         _paste_prompt(console, PROMPTS[0])
@@ -2198,11 +2380,11 @@ def test_lifecycle_prompt_paste_requires_the_actual_terminal_mode(mode):
 ])
 @pytest.mark.parametrize("foreground", ["30", "38;2;0;0;0", "38;2;26;26;26"])
 def test_lifecycle_new_dialog_requires_its_rendered_focus_not_any_redraw(
-    tmp_path, phase, foreground,
-):
+    tmp_path: Path, phase: str, foreground: str,
+) -> None:
     from types import SimpleNamespace
 
-    def draw(row, column, text, style="0;37;48;5;235"):
+    def draw(row: int, column: int, text: str, style: str = "0;37;48;5;235") -> bytes:
         return f"\x1b[{row};{column}H\x1b[{style}m{text}\x1b[0m".encode()
 
     data = bytearray(b"\x1b[2J")
@@ -2245,10 +2427,12 @@ def test_lifecycle_new_dialog_requires_its_rendered_focus_not_any_redraw(
 
 
 @pytest.mark.parametrize("query", [b"\x1b[6n", b"\x1b[?6n"])
-def test_lifecycle_passive_renderer_accepts_status_queries_without_sending_input(tmp_path, query):
+def test_lifecycle_passive_renderer_accepts_status_queries_without_sending_input(
+    tmp_path: Path, query: bytes,
+) -> None:
     from types import SimpleNamespace
 
-    sent = []
+    sent: list[bytes] = []
     witness = _Witness(tmp_path, {}, None, None, None, None)
     console = SimpleNamespace(
         output=bytearray(b"\x1b[2J\x1b[H" + PROMPTS[0].encode() + query[:3]),
@@ -2262,16 +2446,16 @@ def test_lifecycle_passive_renderer_accepts_status_queries_without_sending_input
 
 
 @pytest.mark.parametrize("attached", [True, False])
-def test_lifecycle_selection_waits_for_the_current_cli_prompt(tmp_path, attached):
+def test_lifecycle_selection_waits_for_the_current_cli_prompt(tmp_path: Path, attached: bool) -> None:
     from types import SimpleNamespace
 
     witness = _Witness(tmp_path, {}, None, None, None, None)
     console = SimpleNamespace(
         output=bytearray(b"c123 Start of Prompt Indicator\r\nInteractive"),
     )
-    checks = []
+    checks: list[str] = []
 
-    def send(value):
+    def send(value: bytes) -> None:
         if value == b"\t\r":
             console.output.extend(b"\x1b[2J\x1b[HWorktree actions\r\n\xe2\x94\x82 Open \xe2\x94\x82")
         elif value == b"\r":
@@ -2280,12 +2464,13 @@ def test_lifecycle_selection_waits_for_the_current_cli_prompt(tmp_path, attached
                 + (b"Start of Prompt Indicator\r\nInteractive" if attached else b"Loading"),
             )
 
-    def wait(check, label):
+    def wait(check: Callable[[], object], label: str) -> None:
         checks.append(label)
         if not check():
             raise TimeoutError(label)
 
-    console.send, witness.wait = send, wait
+    console.send = send
+    setattr(witness, "wait", wait)
     if attached:
         witness.select(console, {"id": "fixture-c123"}, "Open")
     else:
@@ -2299,8 +2484,9 @@ def test_lifecycle_selection_waits_for_the_current_cli_prompt(tmp_path, attached
     [(None, 65, 30, False), (120, 65, 75, True), (120, 130, 120, False)],
 )
 def test_fullsuite_resume_shares_launch_budget_with_prompt_attachment(
-    tmp_path, monkeypatch, launch_timeout, event_after, expected_clock, completed,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, launch_timeout: float | None,
+    event_after: int, expected_clock: int, completed: bool,
+) -> None:
     from types import SimpleNamespace
 
     home = tmp_path / "copilot-home"
@@ -2313,17 +2499,19 @@ def test_fullsuite_resume_shares_launch_budget_with_prompt_attachment(
         SimpleNamespace(execution_deadline=200), launch_timeout=launch_timeout,
     )
     witness.history = history
-    witness._capture_processes = witness._capture_liveness = lambda: None
-    witness._refresh_before_resume = lambda *_: None
-    witness._action_location = lambda *_: (1, 1)
-    witness.one_native = lambda: (101, 1001)
-    witness.rendered = lambda _: "Start of Prompt Indicator Interactive" if clock[0] >= 45 else "Loading"
+    capture = lambda: None
+    setattr(witness, "_capture_processes", capture)
+    setattr(witness, "_capture_liveness", capture)
+    setattr(witness, "_refresh_before_resume", lambda *_: None)
+    setattr(witness, "_action_location", lambda *_: (1, 1))
+    setattr(witness, "one_native", lambda: (101, 1001))
+    setattr(witness, "rendered", lambda _: "Start of Prompt Indicator Interactive" if clock[0] >= 45 else "Loading")
     console = SimpleNamespace(output=b"c123 LIFECYCLE_REPLY_4", send=lambda _: None)
 
-    def sleep(_seconds):
+    def sleep(_seconds: float) -> None:
         clock[0] += 5
         if clock[0] >= event_after:
-            events = [{"type": "user.message", "data": {"content": PROMPTS[3]}}]
+            events: list[_Event] = [{"type": "user.message", "data": {"content": PROMPTS[3]}}]
             if clock[0] >= event_after + 10:
                 events.extend([
                     {"type": "assistant.message", "data": {"content": "LIFECYCLE_REPLY_4"}},
@@ -2338,7 +2526,7 @@ def test_fullsuite_resume_shares_launch_budget_with_prompt_attachment(
     if completed:
         witness.select(console, {"id": "fixture-c123"}, "Resume")
         assert witness.turn(PROMPTS[3], 4, console) == (101, 1001)
-        assert witness.turn_observation["launch_readiness_seconds"] == event_after
+        assert cast(_JsonObject, witness.turn_observation)["launch_readiness_seconds"] == event_after
     else:
         with pytest.raises(TimeoutError, match="did not attach|did not record"):
             witness.select(console, {"id": "fixture-c123"}, "Resume")
@@ -2347,10 +2535,12 @@ def test_fullsuite_resume_shares_launch_budget_with_prompt_attachment(
 
 
 @pytest.mark.parametrize("case", ["stopped", "wrong-highlight", "still-unknown"])
-def test_lifecycle_resume_refresh_requires_a_safe_action_and_real_stopped_frame(tmp_path, case):
+def test_lifecycle_resume_refresh_requires_a_safe_action_and_real_stopped_frame(
+    tmp_path: Path, case: str,
+) -> None:
     from types import SimpleNamespace
 
-    def menu(primary, selected):
+    def menu(primary: str, selected: str) -> bytes:
         labels = (primary, "Finalize", "Refresh", "View details")
         lines = ["Worktree actions"] + [
             "\u2502 " + ("\x1b[1m" if label == selected else "\x1b[22m")
@@ -2361,9 +2551,9 @@ def test_lifecycle_resume_refresh_requires_a_safe_action_and_real_stopped_frame(
 
     witness = _Witness(tmp_path, {}, None, None, None, None)
     console = SimpleNamespace(output=bytearray(menu("Open", "Open")))
-    sent = []
+    sent: list[bytes] = []
 
-    def send(value):
+    def send(value: bytes) -> None:
         sent.append(value)
         if value.startswith(b"\x1b[H"):
             assert value == b"\x1b[H" + b"\x1b[B" * 2
@@ -2376,13 +2566,14 @@ def test_lifecycle_resume_refresh_requires_a_safe_action_and_real_stopped_frame(
         else:
             console.output.extend(menu("Resume", "Resume"))
 
-    def wait(check, label):
+    def wait(check: Callable[[], _T], label: str) -> _T:
         value = check()
         if not value:
             raise TimeoutError(label)
         return value
 
-    console.send, witness.wait = send, wait
+    console.send = send
+    setattr(witness, "wait", wait)
     if case == "stopped":
         witness._refresh_before_resume(console, {"id": "fixture-c123"})
         assert witness._action_location(console, "Resume") is not None
@@ -2393,7 +2584,7 @@ def test_lifecycle_resume_refresh_requires_a_safe_action_and_real_stopped_frame(
         assert sent.count(b"\r") == (0 if case == "wrong-highlight" else 1)
 
 
-def test_lifecycle_terminal_diagnostics_retain_the_recent_refusal(tmp_path):
+def test_lifecycle_terminal_diagnostics_retain_the_recent_refusal(tmp_path: Path) -> None:
     diagnostics = tmp_path / "diagnostics"
     diagnostics.mkdir()
     (diagnostics / "lifecycle-0.terminal.txt").write_text(
@@ -2402,7 +2593,7 @@ def test_lifecycle_terminal_diagnostics_retain_the_recent_refusal(tmp_path):
         + "redraw payload\n" * 300,
         encoding="utf-8",
     )
-    records = []
+    records: list[str] = []
     with pytest.raises(RuntimeError, match="native failure"):
         with _capture_failure(tmp_path, lambda name, value: records.append(value)):
             raise RuntimeError("native failure")
@@ -2412,11 +2603,13 @@ def test_lifecycle_terminal_diagnostics_retain_the_recent_refusal(tmp_path):
 
 
 @pytest.mark.parametrize("observation", ["empty", "live", "unconfirmed"])
-def test_lifecycle_mux_venue_refuses_existing_or_unconfirmed_servers(monkeypatch, observation):
+def test_lifecycle_mux_venue_refuses_existing_or_unconfirmed_servers(
+    monkeypatch: pytest.MonkeyPatch, observation: str,
+) -> None:
     from agent_remote_driver import windows_mux_processes
     from agent_remote_driver.mux_observation_types import ObservationUnavailable
 
-    def observe():
+    def observe() -> dict[int, str]:
         if observation == "unconfirmed":
             raise ObservationUnavailable("controlled incomplete census")
         return {123: "controlled birth"} if observation == "live" else {}
@@ -2431,7 +2624,7 @@ def test_lifecycle_mux_venue_refuses_existing_or_unconfirmed_servers(monkeypatch
 
 @pytest.mark.skipif(os.name != "nt", reason="Native owned process metadata")
 @pytest.mark.timeout(30)
-def test_lifecycle_process_observation_uses_owned_handles_and_omits_inline_code(tmp_path):
+def test_lifecycle_process_observation_uses_owned_handles_and_omits_inline_code(tmp_path: Path) -> None:
     from agent_procutil.owned_budget import OwnedExecutionBudget
 
     (tmp_path / "diagnostics").mkdir()
@@ -2487,13 +2680,13 @@ def test_lifecycle_process_observation_uses_owned_handles_and_omits_inline_code(
         assert records[-1]["complete"] is False
 
 
-def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_them(tmp_path):
+def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_them(tmp_path: Path) -> None:
     import test_installed_suite_payloads as controls
     from manager_installed_suite_payloads import (
         _PROVENANCE, prepare_git_transport, serve_git_transport,
     )
 
-    artifact = controls._artifact(tmp_path)
+    artifact = cast(Callable[[Path], Path], controls._artifact)(tmp_path)
     (artifact / ".gitignore").write_text("generated.txt\n")
     (artifact / "generated.txt").write_bytes(b"Frozen generated bytes\n\x00done\n")
     (artifact / ".gitattributes").write_bytes(
@@ -2510,7 +2703,10 @@ def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_
         NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
     )
 
-    def run(argv, env, cwd, diagnostics, label, *, timeout):
+    def run(
+        argv: Sequence[str | Path], env: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float | None = None,
+    ) -> str:
         return subprocess.run(
             list(map(str, argv)), cwd=cwd, env=env, capture_output=True, text=True,
             check=True, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -2519,7 +2715,7 @@ def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_
     commit = run(
         ["git", "rev-parse", "HEAD"], environment, installed.REPO, tmp_path, "source", timeout=15,
     )
-    controls._seal(artifact, commit)
+    cast(Callable[[Path, str], None], controls._seal)(artifact, commit)
     before = _PROVENANCE["content_manifest"](artifact)
     project = tmp_path / "project"
     project.mkdir()
@@ -2528,7 +2724,7 @@ def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_
         deadline=time.monotonic() + 30, run=run,
     )
     copied = tmp_path / "copied"
-    serving = {
+    serving: _TransportArguments = {
         "environment": environment, "project": project, "diagnostics": tmp_path,
         "deadline": time.monotonic() + 30, "run": run,
     }
@@ -2562,7 +2758,9 @@ def test_frozen_git_transport_preserves_ignored_artifact_bytes_without_mutating_
 
 
 @pytest.mark.parametrize("custody_source", ["backend", "body"])
-def test_frozen_git_transport_preserves_later_unreaped_custody(tmp_path, custody_source):
+def test_frozen_git_transport_preserves_later_unreaped_custody(
+    tmp_path: Path, custody_source: str,
+) -> None:
     import urllib.request
 
     from manager_installed_suite_payloads import serve_git_transport
@@ -2571,7 +2769,7 @@ def test_frozen_git_transport_preserves_later_unreaped_custody(tmp_path, custody
     custody = UnreapedProcessError("controlled unresolved backend custody")
     calls = 0
 
-    def run(argv, *_args, **_kwargs):
+    def run(argv: Sequence[str | Path], *_args: object, **_kwargs: object) -> str:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -2608,7 +2806,9 @@ def test_frozen_git_transport_preserves_later_unreaped_custody(tmp_path, custody
 
 @pytest.mark.skipif(os.name != "nt", reason="Actual native Windows suite payload acquisition")
 @pytest.mark.timeout(900)
-def test_installed_suite_payload_closure_uses_the_real_cli(record_testsuite_property):
+def test_installed_suite_payload_closure_uses_the_real_cli(
+    record_testsuite_property: _RecordProperty,
+) -> None:
     from agent_procutil.owned_budget import OwnedExecutionBudget
     from manager_installed_suite_payloads import (
         _PROVENANCE, install_payload_closure, prepare_git_transport, selected_profile,
@@ -2688,7 +2888,7 @@ def test_installed_suite_payload_closure_uses_the_real_cli(record_testsuite_prop
         assert installed._host_state() == before_host
 
 
-def _actions(witness):
+def _actions(witness: _Witness) -> _JsonObject:
     """The same real Manager controls qualify core and complete-suite installs."""
     first = witness.manager()
     first.send(b"\r")
@@ -2744,7 +2944,7 @@ def _actions(witness):
     assert witness.records("records-resumed") == record
     copilot_home = Path(witness.env["COPILOT_HOME"])
     _assert_conversation_sequence(
-        _events(witness.history, copilot_home),
+        _events(cast(Path, witness.history), copilot_home),
         system_context=getattr(witness, "system_context", False),
     )
     assert any(
@@ -2754,7 +2954,7 @@ def _actions(witness):
     witness.close_cli(resumed, replacement)
     assert not witness.one_native()
     return {
-        "worktree": record["id"], "conversation": witness.history.parent.name,
+        "worktree": record["id"], "conversation": cast(Path, witness.history).parent.name,
         "native_before_open": original, "native_after_resume": replacement,
         "create": True, "open_existing": True, "detach_preserved": True,
         "normal_exit": True, "resume_continued": True,
@@ -2763,7 +2963,9 @@ def _actions(witness):
 
 @pytest.mark.skipif(os.name != "nt", reason="Native installed Windows Manager lifecycle")
 @pytest.mark.timeout(900)
-def test_installed_manager_creates_resumes_and_opens_one_real_cli(record_testsuite_property):
+def test_installed_manager_creates_resumes_and_opens_one_real_cli(
+    record_testsuite_property: _RecordProperty,
+) -> None:
     from agent_procutil.daemon_instances import daemon_test_lifecycle
     from agent_procutil.owned_budget import OwnedExecutionBudget
     from plugin_test_command_safety import private_mux_args
@@ -2788,7 +2990,8 @@ def test_installed_manager_creates_resumes_and_opens_one_real_cli(record_testsui
             root = Path(raw)
             namespace = private_mux_args(root)[1]
             env = _case_environment(root)
-            _private_psmux(root / "mux", psmux, namespace, env)
+            private_psmux = cast(Callable[[Path, str, str, dict[str, str]], None], _private_psmux)
+            private_psmux(root / "mux", psmux, namespace, env)
             installed.prepare(root, identity)
             _stage_launch_companions(root, identity, budget.execution_deadline)
             for component in ("manager", "engine"):
@@ -2831,7 +3034,7 @@ def test_installed_manager_creates_resumes_and_opens_one_real_cli(record_testsui
                 }
             )
             _project(root, env, engine, copilot)
-            cleanup = []
+            cleanup: list[InstanceCleanupResult] = []
             with (
                 daemon_test_lifecycle(
                     owner="installed-manager-lifecycle",

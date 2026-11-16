@@ -10,7 +10,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def vendor_pairs():
+def vendor_pairs() -> list[tuple[Path, Path]]:
     pairs = [
         (
             REPO / "libs" / "configuration-layers" / "src" / package / filename,
@@ -33,7 +33,7 @@ def vendor_pairs():
     return pairs
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()

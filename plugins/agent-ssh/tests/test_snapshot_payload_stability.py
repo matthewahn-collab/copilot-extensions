@@ -15,7 +15,7 @@ from agent_procutil.owned_process import run_caller_owned
 from test_snapshot_runtime import _cell, _configured_caller, _snapshot
 
 
-def _entries(root):
+def _entries(root: Path) -> dict[str, str]:
     return {
         str(path.relative_to(root)): (
             hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "directory"
@@ -26,7 +26,9 @@ def _entries(root):
 
 @pytest.mark.parametrize("kind", ["writer", "mesh"])
 @pytest.mark.parametrize("host", ["pwsh", "powershell.exe", "bash"])
-def test_cold_snapshot_preserves_complete_payload(tmp_path, monkeypatch, kind, host):
+def test_cold_snapshot_preserves_complete_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, host: str,
+) -> None:
     if host == "bash" and os.name == "nt":
         pytest.skip("Native POSIX snapshot wrapper required")
     shell = shutil.which(host)

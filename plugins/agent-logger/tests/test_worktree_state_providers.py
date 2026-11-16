@@ -29,7 +29,9 @@ REPOSITORY = "example.test/owner/source"
 
 
 @pytest.mark.no_autotrust
-def test_readonly_logger_resolver_refuses_before_import(tmp_path, monkeypatch):
+def test_readonly_logger_resolver_refuses_before_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from configuration_context.readiness import PROBE_CONTRACT, PROBE_ENV, ProbeContractError
 
     payload = tmp_path / "payload"

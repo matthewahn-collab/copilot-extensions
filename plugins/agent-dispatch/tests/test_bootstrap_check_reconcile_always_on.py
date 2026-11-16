@@ -93,7 +93,7 @@ def _bash_env_path(path: Path) -> str:
     "C:/Program Files/Git/bin/bash.exe",
     "c:/program files/GIT/usr/bin/bash.exe",
 ])
-def test_git_bash_home_path_accepts_both_windows_separator_forms(monkeypatch, bash):
+def test_git_bash_home_path_accepts_both_windows_separator_forms(monkeypatch: pytest.MonkeyPatch, bash: str) -> None:
     monkeypatch.setitem(globals(), "_BASH", bash)
     assert _bash_env_path(Path(r"C:\Users\Fixture User\home")) == "/c/Users/Fixture User/home"
 
@@ -103,26 +103,26 @@ def test_git_bash_home_path_accepts_both_windows_separator_forms(monkeypatch, ba
     "C:/Users/Fixture/AppData/Local/Microsoft/WindowsApps/bash.exe",
     "C:/Windows/System32/bash.exe",
 ])
-def test_windows_launcher_aliases_are_never_selected_as_native_bash(monkeypatch, bash):
+def test_windows_launcher_aliases_are_never_selected_as_native_bash(monkeypatch: pytest.MonkeyPatch, bash: str) -> None:
     monkeypatch.setattr(Path, "is_file", lambda _path: False)
     monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: bash)
     monkeypatch.setenv("PATH", "")
     assert _resolve_bash() is None
 
 
-def test_hook_scripts_exist():
+def test_hook_scripts_exist() -> None:
     assert _PS1.is_file()
     assert _SH.is_file()
 
 
-def test_ps1_has_no_opt_in_gate():
+def test_ps1_has_no_opt_in_gate() -> None:
     text = _PS1.read_text(encoding="utf-8")
     assert "optInKey" not in text
     assert "optedIn" not in text
     assert "background reconcile SKIPPED" not in text
 
 
-def test_sh_has_no_opt_in_gate():
+def test_sh_has_no_opt_in_gate() -> None:
     text = _SH.read_text(encoding="utf-8")
     assert "optInKey" not in text
     assert "optedIn" not in text
@@ -198,8 +198,8 @@ def _clean_env(overrides: dict[str, str]) -> dict[str, str]:
     "flat", "nested", "nested-incomplete", "nested-stale", "nested-fallback",
 ))
 def test_powershell_current_nested_runtime_never_enters_reconciliation(
-    tmp_path, host_name, case,
-):
+    tmp_path: Path, host_name: str, case: str,
+) -> None:
     host = shutil.which(host_name)
     if not host:
         pytest.skip("PowerShell host unavailable")
@@ -238,12 +238,12 @@ def test_powershell_current_nested_runtime_never_enters_reconciliation(
     )
     env = _clean_env({
         "HOME": str(home), "USERPROFILE": str(home),
-        "PATH": str(Path(sys._base_executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+        "PATH": str(Path(getattr(sys, "_base_executable")).parent) + os.pathsep + os.environ.get("PATH", ""),
     })
     result = subprocess.run(
         [host, "-NoProfile", "-NonInteractive", "-File", str(scripts / "bootstrap-check.ps1")],
         cwd=home, env=env, capture_output=True, text=True, timeout=30,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW"),
     )
     healthy = case in {"flat", "nested"}
     assert result.returncode == (0 if healthy else 126), result.stdout + result.stderr
@@ -256,9 +256,10 @@ def test_powershell_current_nested_runtime_never_enters_reconciliation(
 
 
 @pytest.mark.skipif(_BASH is None, reason="bash not available")
-def test_sh_reconciles_without_any_opt_in_config(tmp_path):
+def test_sh_reconciles_without_any_opt_in_config(tmp_path: Path) -> None:
     """No .copilot-extensions/config.yaml at all -- reconcile must still
     proceed unconditionally now that the opt-in gate is gone."""
+    assert _BASH is not None
     home = tmp_path / "home"
     home.mkdir()
     project = tmp_path / "project"
@@ -288,10 +289,11 @@ def test_sh_reconciles_without_any_opt_in_config(tmp_path):
 
 
 @pytest.mark.skipif(_BASH is None, reason="bash not available")
-def test_sh_reconciles_even_with_stale_opt_in_key_present(tmp_path):
+def test_sh_reconciles_even_with_stale_opt_in_key_present(tmp_path: Path) -> None:
     """A leftover `background_reconcile_<plugin>: false` from before this
     gate's removal must not resurrect the old skip behavior -- the key is
     now inert."""
+    assert _BASH is not None
     home = tmp_path / "home"
     home.mkdir()
     project = tmp_path / "project"
@@ -328,7 +330,8 @@ def test_sh_reconciles_even_with_stale_opt_in_key_present(tmp_path):
 
 
 @pytest.mark.skipif(_BASH is None, reason="bash not available")
-def test_relative_path_python_remains_available_to_home_check_and_worker(tmp_path):
+def test_relative_path_python_remains_available_to_home_check_and_worker(tmp_path: Path) -> None:
+    assert _BASH is not None
     home = tmp_path / "home"
     home.mkdir()
     plugin = _make_fake_plugin(tmp_path, _PLUGIN_NAME)

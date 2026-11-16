@@ -1,6 +1,7 @@
 """Refusal controls, not evidence of native suite installation."""
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from copy import deepcopy
 import hashlib
 import json
@@ -11,20 +12,26 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from manager_installed_suite_runtimes import CommandRunner
 
 NATIVE = Path(__file__).parent / "native"
 RUNTIMES = runpy.run_path(str(NATIVE / "manager_installed_suite_runtimes.py"))
 
 
 @pytest.fixture
-def fresh_fixture():
+def fresh_fixture() -> dict[str, Any]:
     return runpy.run_path(str(NATIVE / "manager_installed_suite_fixture.py"))
 
 
 @pytest.mark.parametrize("last_status", ("settled", "held"))
-def test_fresh_cleanup_diagnostics_cannot_hide_a_held_tail(tmp_path, fresh_fixture, last_status):
+def test_fresh_cleanup_diagnostics_cannot_hide_a_held_tail(
+    tmp_path: Path, fresh_fixture: dict[str, Any], last_status: str,
+) -> None:
     from types import SimpleNamespace
 
     cleanup = [
@@ -44,10 +51,12 @@ def test_fresh_cleanup_diagnostics_cannot_hide_a_held_tail(tmp_path, fresh_fixtu
     assert report["omitted"] == 1 and len(report["instances"]) == 32
 
 
-def test_fresh_cleanup_diagnostic_write_cannot_mask_held_custody(tmp_path, monkeypatch, fresh_fixture):
+def test_fresh_cleanup_diagnostic_write_cannot_mask_held_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     from types import SimpleNamespace
 
-    def failed_write(*_):
+    def failed_write(*_: object) -> NoReturn:
         raise OSError("controlled diagnostic write failure")
 
     monkeypatch.setattr(fresh_fixture["suite"], "_write", failed_write)
@@ -55,13 +64,17 @@ def test_fresh_cleanup_diagnostic_write_cannot_mask_held_custody(tmp_path, monke
         fresh_fixture["_verify_native_cleanup"](tmp_path, [
             SimpleNamespace(instance_id="fixture", status="held", reason="launch-outcome-unknown"),
         ])
-    assert any("controlled diagnostic write failure" in note for note in caught.value.__notes__)
+    assert any(
+        "controlled diagnostic write failure" in note
+        for note in cast(list[str], getattr(caught.value, "__notes__"))
+    )
 
 
 @pytest.mark.parametrize("write_fails", (False, True))
 def test_fresh_retained_payload_change_never_reseals_or_loses_its_refusal(
-    tmp_path, monkeypatch, fresh_fixture, write_fails,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    fresh_fixture: dict[str, Any], write_fails: bool,
+) -> None:
     frozen = tmp_path / "suite-artifact" / "plugins" / "agent-index"
     installed = tmp_path / "installed"
     for root in (frozen, installed):
@@ -76,13 +89,16 @@ def test_fresh_retained_payload_change_never_reseals_or_loses_its_refusal(
     private = b"private fixture content"
     (cache / "module.pyc").write_bytes(private)
     if write_fails:
-        def failed_write(*_):
+        def failed_write(*_: object) -> NoReturn:
             raise OSError("controlled diagnostic write failure")
         monkeypatch.setattr(fresh_fixture["suite"], "_write", failed_write)
     with pytest.raises(ValueError, match="agent-index: the frozen installed payload changed") as caught:
         verify(tmp_path, rows)
     if write_fails:
-        assert any("controlled diagnostic write failure" in note for note in caught.value.__notes__)
+        assert any(
+            "controlled diagnostic write failure" in note
+            for note in cast(list[str], getattr(caught.value, "__notes__"))
+        )
     else:
         raw = (tmp_path / "diagnostics" / "suite-lifecycle-payload-difference-agent-index.json").read_bytes()
         assert private not in raw
@@ -92,7 +108,9 @@ def test_fresh_retained_payload_change_never_reseals_or_loses_its_refusal(
     assert not (frozen / "__pycache__").exists()
 
 
-def test_fresh_payload_refusal_retains_differences_for_every_changed_owner(tmp_path, fresh_fixture):
+def test_fresh_payload_refusal_retains_differences_for_every_changed_owner(
+    tmp_path: Path, fresh_fixture: dict[str, Any],
+) -> None:
     (tmp_path / "diagnostics").mkdir()
     rows = {}
     for name in ("agent-index", "ai-attribution"):
@@ -113,7 +131,9 @@ def test_fresh_payload_refusal_retains_differences_for_every_changed_owner(tmp_p
         assert "module.pyc" in report["added"]
 
 
-def test_fresh_suite_refuses_shared_host_before_creating_a_case(tmp_path, monkeypatch, fresh_fixture):
+def test_fresh_suite_refuses_shared_host_before_creating_a_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with pytest.raises(RuntimeError, match="disposable GitHub-hosted Windows VM"):
         fresh_fixture["prepare"](tmp_path / "never-created")
@@ -121,8 +141,8 @@ def test_fresh_suite_refuses_shared_host_before_creating_a_case(tmp_path, monkey
 
 
 def test_fresh_environment_keeps_real_consumers_without_inherited_identity(
-    tmp_path, monkeypatch, fresh_fixture,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     for key, value in {
         "AGENT_TEST_MODE": "1", "AGENT_WORKTREES_STATUS_MONITOR": "0",
         "AGENT_WORKTREES_NO_SELFPROVISION": "1", "WORKTREE_NO_UPDATE": "1",
@@ -140,8 +160,8 @@ def test_fresh_environment_keeps_real_consumers_without_inherited_identity(
 
 
 def test_fresh_acquisition_owns_its_git_settings_before_any_constructor(
-    tmp_path, monkeypatch, fresh_fixture,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     import test_resume_pane_startup
     from plugin_test_containment import SANDBOX_ENV
 
@@ -150,7 +170,7 @@ def test_fresh_acquisition_owns_its_git_settings_before_any_constructor(
         key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")
     }
 
-    def git(*args):
+    def git(*args: str | Path) -> str:
         return subprocess.run(
             ["git", *map(str, args)], check=True, capture_output=True, text=True,
             env=environment, timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -174,7 +194,10 @@ def test_fresh_acquisition_owns_its_git_settings_before_any_constructor(
     class BeforeConstruction(Exception):
         pass
 
-    def before_construction(payload, root, env, project, diagnostics, label, run):
+    def before_construction(
+        payload: Path, root: Path, env: dict[str, str], project: Path,
+        diagnostics: Path, label: str, run: CommandRunner,
+    ) -> NoReturn:
         assert Path(git("-C", project, "rev-parse", "--show-toplevel")).resolve() == project.resolve()
         assert git("-C", project, "symbolic-ref", "--short", "HEAD") == "main"
         assert json.loads((project.parent / "setup.json").read_text())["project_root"] == str(project)
@@ -191,8 +214,8 @@ def test_fresh_acquisition_owns_its_git_settings_before_any_constructor(
 
 
 def test_fresh_adoption_registers_a_real_private_origin_and_publishes_main(
-    tmp_path, fresh_fixture,
-):
+    tmp_path: Path, fresh_fixture: dict[str, Any],
+) -> None:
     import yaml
 
     profile, _portfolio, _payloads, _home = _selection(tmp_path)
@@ -208,9 +231,12 @@ def test_fresh_adoption_registers_a_real_private_origin_and_publishes_main(
         key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")
     }
     environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", USERPROFILE=str(home))
-    registrations = []
+    registrations: list[str] = []
 
-    def run(argv, env, cwd, diagnostics, label, *, timeout):
+    def run(
+        argv: Sequence[str | Path], env: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float,
+    ) -> str:
         if argv[0] == "git":
             return subprocess.run(
                 list(map(str, argv)), cwd=cwd, env=env, capture_output=True, text=True,
@@ -256,8 +282,8 @@ def test_fresh_adoption_registers_a_real_private_origin_and_publishes_main(
 
 
 def test_harness_registration_preserves_the_full_profile_before_adoption(
-    tmp_path, fresh_fixture,
-):
+    tmp_path: Path, fresh_fixture: dict[str, Any],
+) -> None:
     import yaml
 
     profile, _portfolio, _payloads, _home = _selection(tmp_path)
@@ -276,13 +302,13 @@ def test_harness_registration_preserves_the_full_profile_before_adoption(
 
 
 def test_fresh_command_owner_has_a_finite_vm_lifetime_boundary(
-    tmp_path, monkeypatch, fresh_fixture,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     from types import SimpleNamespace
     from agent_procutil import _caller_owned
 
-    observed = []
-    def run(argv, **options):
+    observed: list[tuple[list[str], dict[str, Any]]] = []
+    def run(argv: list[str], **options: Any) -> SimpleNamespace:
         observed.append((argv, options))
         return SimpleNamespace(returncode=0, stdout="constructed\n", stderr="")
 
@@ -302,8 +328,8 @@ def test_fresh_command_owner_has_a_finite_vm_lifetime_boundary(
 
 
 def test_fresh_command_failure_retains_the_original_constructor_diagnostic(
-    tmp_path, monkeypatch, fresh_fixture,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
     from types import SimpleNamespace
     from agent_procutil import _caller_owned
 
@@ -321,8 +347,8 @@ def test_fresh_command_failure_retains_the_original_constructor_diagnostic(
 
 
 def test_fresh_command_failure_retains_the_case_owned_unannounced_request_log(
-    tmp_path, fresh_fixture,
-):
+    tmp_path: Path, fresh_fixture: dict[str, Any],
+) -> None:
     diagnostics = tmp_path / "diagnostics"
     diagnostics.mkdir()
     logs = tmp_path / "h" / ".copilot-extensions" / "update-driver"
@@ -348,16 +374,23 @@ def test_fresh_command_failure_retains_the_case_owned_unannounced_request_log(
 
 
 def test_fresh_engine_construction_enters_the_native_driver_for_each_private_root(
-    tmp_path, monkeypatch, fresh_fixture,
-):
-    calls = []
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_fixture: dict[str, Any],
+) -> None:
+    calls: list[tuple[Sequence[str | Path], dict[str, str], Path, Path, str]] = []
+
+    def capture(
+        argv: Sequence[str | Path], env: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str,
+    ) -> None:
+        calls.append((argv, env, cwd, diagnostics, label))
+
     monkeypatch.setattr(fresh_fixture["shutil"], "which", lambda name: str(tmp_path / "pwsh.exe"))
     payload = tmp_path / "payload"
     environment = {"USERPROFILE": str(tmp_path / "home")}
     for root in (tmp_path / "bootstrap-engine", tmp_path / "home" / ".agent-worktrees"):
         fresh_fixture["_install_engine"](
             payload, root, environment, tmp_path, tmp_path, "engine",
-            lambda *args: calls.append(args),
+            capture,
         )
     assert len(calls) == 2
     for arguments, root in zip(calls, (tmp_path / "bootstrap-engine",
@@ -379,10 +412,10 @@ def test_fresh_engine_construction_enters_the_native_driver_for_each_private_roo
                "missing-action", "same-native", "missing-native"],
 )
 def test_fresh_result_requires_complete_candidate_bound_native_evidence(
-    tmp_path, fresh_fixture, defect,
-):
+    tmp_path: Path, fresh_fixture: dict[str, Any], defect: str | None,
+) -> None:
     profile, portfolio, _payloads, _home = _selection(tmp_path)
-    setup = {
+    setup: dict[str, Any] = {
         "identity": {"candidate_commit": "a" * 40, "run_id": 7, "run_attempt": 2},
         "runtime_closure": {"runtimes": portfolio, "runtime_installation": "observed"},
         "closure": {"profile": profile, "copilot_sha256": "b" * 64},
@@ -394,7 +427,7 @@ def test_fresh_result_requires_complete_candidate_bound_native_evidence(
                                     ".runtime-input-origins.json": "b" * 64},
         },
     }
-    result = {
+    result: dict[str, Any] = {
         "schema": fresh_fixture["RESULT_SCHEMA"], "mode": "fresh",
         "profile": "complete-installed-suite", "runtime_closure": deepcopy(setup["runtime_closure"]),
         "manager_origin": setup["manager_origin"], "identity": deepcopy(setup["identity"]),
@@ -434,7 +467,9 @@ def test_fresh_result_requires_complete_candidate_bound_native_evidence(
             fresh_fixture["validate_evidence"](setup, result)
 
 
-def _selection(tmp_path):
+def _selection(
+    tmp_path: Path,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, dict[str, str]], Path]:
     home = tmp_path / "home"
     inventory = {
         "agent-worktrees": {"runtime_scope": "universal", "version": "1.0"},
@@ -467,10 +502,12 @@ def _selection(tmp_path):
                "payload-only-root", "payload-only-eligible", "payload-only-status",
                "payload-only-foreign", "payload-only-missing-runtime", "payload-only-unknown"],
 )
-def test_runtime_observation_requires_the_complete_eligible_private_portfolio(tmp_path, defect):
+def test_runtime_observation_requires_the_complete_eligible_private_portfolio(
+    tmp_path: Path, defect: str | None,
+) -> None:
     profile, portfolio, payloads, home = _selection(tmp_path)
     if defect and defect.startswith("payload-only"):
-        row = {
+        row: dict[str, Any] = {
             "eligible": False, "status": "payload-only", "root": None,
             "payload": payloads["example-guidance"]["path"],
         }
@@ -513,7 +550,9 @@ def test_runtime_observation_requires_the_complete_eligible_private_portfolio(tm
 
 
 @pytest.mark.parametrize("defect", [None, "host-prefix", "source-import", "wrong-version"])
-def test_runtime_observation_requires_the_actual_selected_import_and_version(tmp_path, defect):
+def test_runtime_observation_requires_the_actual_selected_import_and_version(
+    tmp_path: Path, defect: str | None,
+) -> None:
     prefix = tmp_path / "versions" / "1.0.dev1" / ".venv"
     origin = {
         "prefix": str(prefix),
@@ -533,11 +572,13 @@ def test_runtime_observation_requires_the_actual_selected_import_and_version(tmp
             RUNTIMES["validate_origin"](origin, prefix, "1.0-dev1")
 
 
-def test_runtime_construction_refuses_the_shared_host_before_reading_or_running(tmp_path, monkeypatch):
+def test_runtime_construction_refuses_the_shared_host_before_reading_or_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.syspath_prepend(str(NATIVE))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
-    def forbidden(*_args, **_kwargs):
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
         pytest.fail("No source, constructor or update command may run on the shared host")
 
     with pytest.raises(RuntimeError, match="disposable GitHub-hosted Windows VM"):
@@ -549,7 +590,9 @@ def test_runtime_construction_refuses_the_shared_host_before_reading_or_running(
         )
 
 
-def test_fresh_manager_observation_refuses_shared_host_before_reading(tmp_path, monkeypatch):
+def test_fresh_manager_observation_refuses_shared_host_before_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.syspath_prepend(str(NATIVE))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with pytest.raises(RuntimeError, match="disposable GitHub-hosted Windows VM"):
@@ -566,8 +609,8 @@ def test_fresh_manager_observation_refuses_shared_host_before_reading(tmp_path, 
                "missing-record", "empty-record", "wrong-candidate"],
 )
 def test_fresh_manager_observation_verifies_bytes_without_an_admission_receipt(
-    tmp_path, monkeypatch, defect,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None,
+) -> None:
     monkeypatch.syspath_prepend(str(NATIVE))
     import manager_suite_fixture
 
@@ -594,9 +637,12 @@ def test_fresh_manager_observation_verifies_bytes_without_an_admission_receipt(
         (slot / name).write_text('{"fixture":"constructor record"}')
     project = tmp_path / "project"
     project.mkdir()
-    calls = []
+    calls: list[str] = []
 
-    def run(argv, environment, cwd, diagnostics, label, *, timeout):
+    def run(
+        argv: Sequence[str | Path], environment: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float,
+    ) -> str:
         assert argv[0] == python and argv[1:4] == ["-I", "-B", "-c"]
         assert argv[-2:] == ["worktree_manager", "worktree-manager"]
         assert cwd == project and 0 < timeout <= 30
@@ -639,12 +685,12 @@ def test_fresh_manager_observation_verifies_bytes_without_an_admission_receipt(
 
 
 def test_readiness_failure_details_reuse_only_the_admitted_readonly_owner(
-    tmp_path, monkeypatch, capsys,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     from contextlib import contextmanager
     from types import ModuleType, SimpleNamespace
 
-    calls = []
+    calls: list[str] = []
     selected = SimpleNamespace(qualified_id="fixture::example/runtime",
                                owner=SimpleNamespace(owner_id="fixture::example"))
     ignored = SimpleNamespace(qualified_id="fixture::other/runtime")
@@ -654,15 +700,18 @@ def test_readiness_failure_details_reuse_only_the_admitted_readonly_owner(
                            bindings={"fixture::example": owner})
 
     @contextmanager
-    def caller_owned(enabled):
+    def caller_owned(enabled: bool) -> Iterator[None]:
         assert enabled is True
         yield
 
-    def admit(project, *, readiness_only):
+    def admit(project: Path, *, readiness_only: bool) -> SimpleNamespace:
         assert project == tmp_path and readiness_only is True
         return host
 
-    def invoke(module, binding, platform, *, readonly, timeout):
+    def invoke(
+        module: SimpleNamespace, binding: SimpleNamespace, platform: str, *,
+        readonly: bool, timeout: float,
+    ) -> SimpleNamespace:
         assert module is selected and binding is bound_owner and platform == "windows"
         assert readonly is True and 0 < timeout <= 10
         calls.append(module.qualified_id)
@@ -671,7 +720,9 @@ def test_readiness_failure_details_reuse_only_the_admitted_readonly_owner(
             stdout=b'{"state":"failed","detail":"actual owner reason"}',
         )
 
-    def bind(admitted, modules, platform):
+    def bind(
+        admitted: SimpleNamespace, modules: list[SimpleNamespace], platform: str,
+    ) -> tuple[dict[str, object], dict[str, SimpleNamespace]]:
         assert admitted is host and modules == [selected] and platform == "windows"
         calls.append("bound-readiness")
         return {}, {"fixture::example": bound_owner}
@@ -695,7 +746,9 @@ def test_readiness_failure_details_reuse_only_the_admitted_readonly_owner(
     assert json.loads(result["stdout"])["detail"] == "actual owner reason"
 
 
-def test_fresh_index_roles_are_readable_without_runtime_yaml_dependencies(tmp_path, fresh_fixture):
+def test_fresh_index_roles_are_readable_without_runtime_yaml_dependencies(
+    tmp_path: Path, fresh_fixture: dict[str, Any],
+) -> None:
     profile, _portfolio, _payloads, _home = _selection(tmp_path)
     (tmp_path / "h").mkdir()
     project = tmp_path / fresh_fixture["lifecycle"].PROJECT
@@ -729,8 +782,9 @@ def test_fresh_index_roles_are_readable_without_runtime_yaml_dependencies(tmp_pa
                "changed-transport", "changed-cli", "changed-payload", "changed-payload-diagnostic"],
 )
 def test_runtime_construction_keeps_update_discovery_and_readiness_in_one_owned_recipe(
-    tmp_path, monkeypatch, capsys, defect,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], defect: str | None,
+) -> None:
     monkeypatch.syspath_prepend(str(NATIVE))
     import manager_suite_fixture
 
@@ -766,8 +820,8 @@ def test_runtime_construction_keeps_update_discovery_and_readiness_in_one_owned_
     cli = tmp_path / "copilot.exe"
     cli.write_bytes(b"selected actual executable")
     monkeypatch.setattr(shutil, "which", lambda *_args, **_kwargs: str(cli))
-    calls = []
-    portfolio = {}
+    calls: list[str] = []
+    portfolio: dict[str, dict[str, Any]] = {}
     for name in ("agent-worktrees", "agent-machines"):
         root = home / ("." + name)
         python = root / "versions" / "1.0" / ".venv" / "Scripts" / "python.exe"
@@ -790,14 +844,17 @@ def test_runtime_construction_keeps_update_discovery_and_readiness_in_one_owned_
     if defect == "changed-payload-diagnostic":
         original_write = Path.write_text
 
-        def write(path, *args, **kwargs):
+        def write(path: Path, *args: Any, **kwargs: Any) -> int:
             if path.name.startswith("suite-runtime-payload-difference-"):
                 raise OSError("controlled diagnostic write refusal")
             return original_write(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "write_text", write)
 
-    def run(argv, environment, cwd, diagnostics, label, *, timeout):
+    def run(
+        argv: Sequence[str | Path], environment: dict[str, str], cwd: Path,
+        diagnostics: Path, label: str, *, timeout: float,
+    ) -> str:
         assert 0 < timeout <= 120
         assert cwd == project
         calls.append(label)

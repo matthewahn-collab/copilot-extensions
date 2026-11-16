@@ -38,11 +38,12 @@ tomllib = importlib.import_module("tomllib" if sys.version_info >= (3, 11) else 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manager_suite_artifacts import (
     _DELIVERY, _MATERIALIZE, _command, _configuration as _configuration, _env as _env,
-    _runtime_process_inventory_script, _task_inventory_script, _write,
+    _runtime_process_inventory_script, _task_inventory_script, _write as _write,
 )
 from manager_suite_artifacts import _runtime_process_trace_script as _runtime_process_trace_script
 from manager_suite_diagnostics import (
-    MARKERS, _consumer_demand, _engine_probe, _record as _record, _resident_probe, _snapshot, _snapshot_difference,
+    MARKERS as MARKERS, _consumer_demand, _engine_probe, _record as _record,
+    _resident_probe, _snapshot, _snapshot_difference,
     activation_probe,
     retain_driver_logs,
     retain_resident_logs,

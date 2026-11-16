@@ -45,12 +45,12 @@ def extract_source(tree: tarfile.TarFile, root: Path) -> None:
         destination.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
-def content_manifest(root: Path) -> dict[str, dict]:
+def content_manifest(root: Path) -> dict[str, dict[str, str | bool]]:
     """Inventory every artifact path, excluding only the root receipt itself."""
     if (root.is_symlink() or not root.is_dir()
             or getattr(root.lstat(), "st_file_attributes", 0) & 0x400):
         raise ValueError("materialized root must be a real directory")
-    entries = {}
+    entries: dict[str, dict[str, str | bool]] = {}
 
     def refuse_unreadable(error: OSError) -> None:
         raise error
