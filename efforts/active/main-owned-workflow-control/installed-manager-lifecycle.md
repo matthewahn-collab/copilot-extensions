@@ -2368,6 +2368,35 @@ A new published checkpoint and fresh controlled execution are still required.
 Run 43960345947 remains failed. Current-head CI, POSIX probe qualification,
 Windows acceptance and the larger parent gates remain open.
 
+### November 16 - Current gates expose typing and capture-budget work
+
+CI 43961935505 at `bd028b9932` passes eligible units with verified execution
+evidence, but fails the newly adopted whole-file strict ratchet from #12679.
+The diagnostic log reports 3,060 diagnostic lines across 58 changed files
+(including repeated platform checks), not merely the new readiness helper.
+The required PR gate correctly fails with its source guard. No failing
+diagnostic is waived and no checker admission, suppression or strictness rule
+is changed. The required migration reaches existing test/helper bodies in
+several owners and needs a coherent implementation strategy, not an incidental
+guard bypass.
+
+Changed-head capture 43962074711, attempt 1, passes declaration preparation and
+executes both isolated owner-process probes successfully: two passed in
+57.85 seconds, 72.03 seconds including preparation and cleanup. The remaining
+group then reaches its remaining 167.763-second allowance under the unchanged
+240-second aggregate limit. Capture fails without independent verification,
+export or accepted evidence. Its timeout does not identify a passed residual
+portfolio. The earlier unclassified-source refusal is fixed, but this new
+failure remains unresolved and is not retried unchanged or hidden by a larger
+budget.
+
+The existing portfolio owner receives a concrete native POSIX route request
+on #1303, comment 6930144775. The unenrolled CWD jobs and unrelated binding
+recipes are not dispatched as proof. That request is not an accepted transfer
+or new execution enrollment. No new Windows acceptance run is launched while
+current required CI is red. All earlier baseline, frozen-candidate, Main,
+rollout and custody limits remain unchanged.
+
 The canonical `typecheck.py ai-attribution --strict` contract passes all eight
 source targets for both Linux and Windows. Its missing environment is prepared
 only after the checker reports it missing. The corrected cold/repeat writer
