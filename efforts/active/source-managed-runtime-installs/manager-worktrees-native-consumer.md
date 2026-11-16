@@ -87,6 +87,10 @@ unchanged. No feed value or credentials were requested or received.
 - #12176 and the subsequent #12546 constructor correction are existing inputs.
   #10570 remains the separately owned prepared-Worktrees draft; qualification
   does not copy, pre-patch or supersede it.
+- #12852 tracks the current Manager constructor's refusal of equivalent Windows
+  paths. Its existing contributor-owned repair retains its draft/native hold.
+  Do not repeat this known construction failure or copy the repair into this
+  fixture; qualify released repaired inputs after that owner's gates clear.
 - The current parent requires fresh/existing construction parity, a complete
   required-set staging barrier, and foreground-update/independent-service
   lifetime semantics. This slice cannot credit those outcomes from old
@@ -98,7 +102,7 @@ entrypoints, selected fixture inventory and exact case/runner allocation.
 Distinguish released inputs from an unpromoted candidate. A changing branch
 name or previously green receipt is not an immutable source selection.
 
-## Protected-owner adapter plan - agent-recommended, not implemented
+## Protected-owner adapter plan - reviewed source implementation
 
 The authentic-source fixture's third hosted attempt reached the real
 constructor but lacked its required governed package feed. Its application
@@ -133,7 +137,7 @@ VQ1-VQ6 remain open.
   Do not acquire or run Copilot/PSMux prerequisites: this packet does not launch
   Copilot actors, New/Resume or installation-survival cases. Keep existing
   packets' native prerequisites and selectors unchanged.
-- [ ] PF4 - Extend only this named packet's existing protected feed allowlist,
+- [x] PF4 - Extend only this named packet's existing protected feed allowlist,
   after implementation review and controller publication. Validate the same
   credential-free governed HTTPS URL without reading or publishing its value.
   Feed propagation must survive the fixture's fake HOME and intentional UV
@@ -196,12 +200,14 @@ support declaration available. The approved extension does not expose a feed
 to candidate workflows or authorize a production installation. If the owner
 cannot represent this packet, its original bounds or independently sanitized
 evidence, record the exact missing boundary rather than bypass it.
+The controller publication condition is now satisfied; the independent #12852
+constructor dependency still blocks the next native attempt.
 
 The protected-owner adapter plan cleared review in #12801. Its PF/VF checks
 retain the original case, stage, cleanup and evidence bounds. Implementation
-review and protected-controller publication remain required before another
-native attempt. No feed value is exposed to this candidate workflow, and
-native qualification remains blocked.
+review and protected-controller publication are complete, but the constructor
+dependency above still blocks another native attempt. No feed value is exposed
+to this candidate workflow, and native qualification remains unobserved.
 
 ## Plan - agent-recommended
 
@@ -253,6 +259,23 @@ The parent remains Active until its complete Plan and Validation Plan close;
 finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
+
+### 2026-11-16 - Protected controller released, constructor dependency retained
+
+The generated release #12839 merged as
+`793a56b6c93638c7cd1cedf47df55a68d2580e9d`. Main is protected, advertises
+`manager-worktrees-source`, and its workflow, worker, contract, adapter and
+support files match the reviewed #12809 implementation exactly. This closes
+PF4's publication condition, not PF7/VF5 or any native consumer acceptance.
+
+The originally watched promotion failed; later publication does not erase it.
+Current promotion run [43882495119](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43882495119/job/133352797934)
+still fails Manager construction with
+`Manager import is outside its constructed runtime`. #12852 and its existing
+contributor-owned repair address equivalent native Windows path spellings.
+That repair remains draft with its own acceptance hold. The dependency is
+coordinated there; this fixture neither copies it nor replays a known failing
+native attempt. All original effect, stage and production holds remain.
 
 ### 2026-11-16 - Protected adapter merged, native consumer still held
 
