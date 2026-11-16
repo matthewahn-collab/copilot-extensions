@@ -13,6 +13,18 @@ import pytest
 RUNNER = Path(__file__).with_name("run-manager-suite-acceptance.py")
 
 
+def test_fresh_interpreter_bootstraps_the_runner_without_installed_packages(tmp_path: Path) -> None:
+    from agent_procutil import no_window_kwargs
+
+    base = Path(getattr(sys, "_base_executable", sys.executable))
+    result = subprocess.run(
+        [base, "-E", "-S", str(RUNNER), "--help"], cwd=tmp_path,
+        capture_output=True, text=True, timeout=15, **no_window_kwargs(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--main-commit" in result.stdout and "--dev-commit" in result.stdout
+
+
 @pytest.mark.parametrize("failed", ("prepare", "exercise", "assertions", "settle", "exception", None))
 def test_source_stages_keep_bounds_selection_and_unconditional_settlement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: str | None,

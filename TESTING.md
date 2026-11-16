@@ -10219,6 +10219,10 @@ independent source policies selecting the frozen Dev repository. The fixture
 does not inject a source packet or mock the producer. Evidence compares the
 actual installed application declarations and source identities, physical
 environments, native command-routing proofs and retained fixture data.
+Source acquisition uses the existing context-owned read-only Git HTTP owner,
+serving a bare clone of the actual frozen objects without a transport commit.
+Manager launcher proofs query the existing terminal capability for the actual
+interpreter; equal package versions cannot hide a stale generation.
 The original 1,800/900/300/90-second preparation/exercise/assertion/settlement
 allocations and process observer remain unchanged; settlement inventories
 remaining fixture-owned tasks and runtime processes. This case does not launch

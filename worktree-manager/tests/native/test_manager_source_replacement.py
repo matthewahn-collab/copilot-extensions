@@ -7,6 +7,11 @@ from pathlib import Path
 import subprocess
 import sys
 import runpy
+import shutil
+import time
+import urllib.error
+import urllib.request
+import venv
 from typing import Any
 
 import pytest
@@ -14,10 +19,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import manager_source_fixture as source
 import manager_suite_fixture as native
+from manager_suite_artifacts import _command
 
 
 @pytest.fixture
-def git_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, str, str]:
+def contained_run(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent_procutil import _caller_owned
 
     original = _caller_owned.run
@@ -27,6 +33,11 @@ def git_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         return original(*args, **options)
 
     monkeypatch.setattr(_caller_owned, "run", contained)
+
+
+@pytest.fixture
+def git_case(tmp_path_factory: pytest.TempPathFactory, contained_run: None) -> tuple[Path, Path, str, str]:
+    tmp_path = tmp_path_factory.mktemp("git")
     case = tmp_path / "case"
     (case / "project").mkdir(parents=True)
     repository = tmp_path / "repository"
@@ -40,6 +51,74 @@ def git_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     dev = native._commit(case, repository)
     native._git(case, repository, "update-ref", "refs/remotes/origin/dev", dev)
     return case, repository, main, dev
+
+
+def test_real_source_acquisition_and_producer_provenance_share_the_owned_transport(
+    git_case: tuple[Path, Path, str, str],
+) -> None:
+    from worktree_manager.runtime_source import acquire
+    from worktree_manager.runtime_source_config import RuntimeSource
+
+    case, repository, main, dev = git_case
+    source.freeze_source(case, repository, main, dev)
+    producer = runpy.run_path(str(native.REPO / "tools" / "local_install_source.py"))
+    deadline = time.monotonic() + 60
+    with source.source_transport(case, deadline=deadline) as url:
+        with acquire(
+            RuntimeSource("dev", repo=url, allow_dev=True), root=case / "acquired",
+            environment=source._env(case), deadline=deadline,
+        ) as resolved:
+            assert resolved.commit == dev and resolved.main_head == main
+            descriptor = producer["repository_source"](resolved.checkout, None, deadline=deadline)
+            assert descriptor == {"kind": "git", "canonical": "git:" + url.removesuffix(".git"), "ref": ""}
+            admitted = producer["preparation"]._admit(resolved.checkout, dev, "dev", deadline=deadline)
+            assert admitted[1] == resolved.tree
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with pytest.raises(urllib.error.URLError):
+        opener.open(url + "/HEAD", timeout=1)
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native Windows frontdoors")
+@pytest.mark.parametrize("stale", ("cmd", "ps1"))
+def test_manager_frontdoors_reject_a_stale_interpreter_with_the_same_package_version(
+    tmp_path: Path, contained_run: None, stale: str,
+) -> None:
+    case = tmp_path
+    (case / "project").mkdir()
+    interpreters = {}
+    for generation in ("main", "dev"):
+        environment = case / "interpreters" / generation
+        venv.EnvBuilder(with_pip=False).create(environment)
+        interpreters[generation] = environment / "Scripts" / "python.exe"
+    program = case / "capability.py"
+    program.write_text(
+        "import sys\n"
+        f"sys.path.insert(0,{str(native.REPO / 'worktree-manager' / 'src')!r})\n"
+        "from worktree_manager import __version__,terminal_launch\n"
+        "if not terminal_launch.answer_query(['--version']):\n"
+        " print('worktree-manager '+__version__)\n", encoding="utf-8",
+    )
+    bin_dir = case / "h" / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+
+    def write(extension: str, generation: str) -> None:
+        python = interpreters[generation]
+        body = (
+            f'@echo off\n"{python}" -I -B "{program}" %*\nexit /b %errorlevel%\n'
+            if extension == "cmd" else
+            f"& '{python}' -I -B '{program}' @args\nexit $LASTEXITCODE\n"
+        )
+        (bin_dir / ("worktree-manager." + extension)).write_text(body, encoding="utf-8")
+
+    for extension in ("cmd", "ps1"):
+        write(extension, "dev")
+    assert len(source.manager_frontdoors(case, interpreters["dev"])) == 2
+    before = native._run(_command(case, "worktree-manager", "--version", extension=stale), case).stdout
+    write(stale, "main")
+    after = native._run(_command(case, "worktree-manager", "--version", extension=stale), case).stdout
+    assert before == after
+    with pytest.raises(RuntimeError, match=stale + " launcher routes to another physical generation"):
+        source.manager_frontdoors(case, interpreters["dev"])
 
 
 def test_frozen_source_keeps_real_objects_and_is_independent_of_its_donor(

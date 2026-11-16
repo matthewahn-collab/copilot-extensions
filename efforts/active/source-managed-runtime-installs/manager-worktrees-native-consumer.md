@@ -320,6 +320,28 @@ the expectation was repaired without weakening equality or dropping coverage.
 These results are unit and lightweight real-Git/constructor-admission evidence,
 not clean-OS, native service, ordinary-update or release acceptance.
 
+The [first hosted attempt](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43698352620)
+failed at cold CLI import, before fixture creation: the runner's strict-typing
+cleanup had bypassed the containment module's source-library bootstrap.
+Restore that existing bootstrap before importing the canonical process API.
+A fresh base interpreter with site packages and Python environment overrides
+disabled now exercises the actual CLI entrypoint; it and the existing runner
+controls pass (44 tests), with Linux/Windows strict typing and lint still green.
+The failed attempt supplies no native acceptance; a new exact-head hosted
+attempt remains necessary.
+
+Review corrections additionally read each declared distribution name instead of
+assuming it matches its component, query the existing Manager terminal
+capability for each actual frontdoor's physical interpreter, and reuse the
+existing bounded read-only Git HTTP owner for source acquisition. Its bare clone
+retains the real frozen objects; no synthetic transport commit, provenance
+override or production constructor change is introduced. Ten contained source
+controls pass, including real HTTP acquisition plus producer provenance/admission
+and closed-transport checks, and two actual stale-launcher controls with equal
+package versions. Their original runner budgets remain unchanged. The earlier
+timed-out verification was not credited; neither these controls nor review
+corrections establish the still-pending hosted consumer result.
+
 ### 2026-11-15 - Physical application environment prerequisite
 
 #12693 merged as `14fa6069e6da8f2414491630b545a52d39db6d31` after

@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import re
+import runpy
 import shutil
 import sys
+import time
 from typing import Any
 
 import manager_suite_fixture as native
@@ -91,6 +95,46 @@ def _case(directory: Path) -> tuple[Path, dict[str, Any]]:
     return case, setup
 
 
+@contextmanager
+def source_transport(case: Path, *, deadline: float) -> Iterator[str]:
+    """Reuse the existing read-only Git HTTP owner, preserving real Git objects."""
+    transport = {"repository": str(case / "transport.git")}
+    if not Path(transport["repository"]).is_dir():
+        native._git(case, case, "clone", "--bare", "--no-hardlinks",
+                    str(case / "published"), transport["repository"])
+    provider = runpy.run_path(str(Path(__file__).with_name("manager_installed_suite_payloads.py")))
+
+    def run(
+        argv: list[Any], environment: dict[str, str], project: Path, diagnostics: Path,
+        label: str, *, timeout: float,
+    ) -> Any:
+        return native._run(argv, case, timeout=timeout, extra_env=environment)
+
+    with provider["serve_git_transport"](
+        transport, environment=_env(case), project=case / "project",
+        diagnostics=case, deadline=deadline, run=run,
+    ) as serving:
+        yield serving["url"]
+
+
+def manager_frontdoors(case: Path, expected_python: Path) -> dict[str, Any]:
+    rows = {}
+    for extension in ("cmd", "ps1"):
+        observed = native._run(
+            _command(case, "worktree-manager", "--version", extension=extension), case, timeout=30,
+            extra_env={"CE_TERMINAL_CAPABILITY_QUERY": "1"},
+        )
+        proof = json.loads(observed.stdout)
+        actual = Path(proof["runtime"]["command"][0]).resolve(strict=True)
+        if actual != expected_python.resolve(strict=True):
+            raise RuntimeError(f"Manager {extension} launcher routes to another physical generation")
+        rows["worktree-manager." + extension] = {
+            "returncode": observed.returncode, "routes_current": True,
+            "proof": {"kind": "actual terminal runtime capability query", "record": proof},
+        }
+    return rows
+
+
 def _capture(case: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"applications": {}, "resident_observations": {}}
     for name, module in (("worktree-manager", "worktree_manager"), ("agent-worktrees", "agent_worktrees")):
@@ -98,13 +142,18 @@ def _capture(case: Path) -> dict[str, Any]:
         python = native._python(root)
         generation = (root / "current-version").read_text(encoding="utf-8").strip()
         slot = root / "versions" / generation
+        payload = (
+            case / "published" / name if name == "worktree-manager"
+            else case / "published" / "plugins" / name
+        )
+        distribution = native.tomllib.loads((payload / "pyproject.toml").read_text(encoding="utf-8"))["project"]["name"]
         probe = native._run([
             python, "-I", "-B", "-X", "utf8", "-c",
             "import importlib,importlib.metadata,json,sys;"
             "print(json.dumps({'prefix':sys.prefix,'executable':sys.executable,"
             "'module':importlib.import_module(sys.argv[1]).__file__,"
             "'version':importlib.metadata.version(sys.argv[2])}))",
-            module, name,
+            module, distribution,
         ], case, timeout=30)
         origin = json.loads(probe.stdout)
         if not Path(origin["module"]).resolve().is_relative_to(Path(origin["prefix"]).resolve()):
@@ -124,11 +173,14 @@ def _capture(case: Path) -> dict[str, Any]:
     commands = native._frontdoors(case, {
         "commands": {
             name: [{"command": name, "module": name.replace("-", "_"), "variants": ["cmd", "ps1"]}]
-            for name in COMPONENTS
+            for name in ("agent-worktrees",)
         },
         "origins": {name: row["origin"] for name, row in result["applications"].items()},
         "versions": {name: row["generation"] for name, row in result["applications"].items()},
     })
+    commands["worktree-manager"] = manager_frontdoors(
+        case, Path(result["applications"]["worktree-manager"]["origin"]["executable"]),
+    )
     for name in COMPONENTS:
         result["applications"][name]["commands"] = commands[name]
     inventory = native._run(_command(case, "agent-worktrees", "update", "--inventory", "--json"), case)
@@ -156,7 +208,8 @@ def prepare(directory: Path, main: str, dev: str) -> None:
         "declared": {"agent-worktrees": {}}, "before": {},
         "runner_source": native._git(case, native.REPO, "rev-parse", "HEAD"),
         "effects": {"components": list(COMPONENTS), "home": str(case / "h"),
-                    "venue": "github-hosted-windows", "actors": "no New/Resume or survival attempt"},
+                    "venue": "github-hosted-windows", "actors": "no New/Resume or survival attempt",
+                    "transport": "existing context-owned loopback Git HTTP; actual objects only"},
     }
     _write(case / "setup.json", setup)
     try:
@@ -197,13 +250,6 @@ def prepare(directory: Path, main: str, dev: str) -> None:
             "install", "-InstallSource", snapshots["main"]["agent-worktrees"], "-InputTimeout", "600",
         ], case, timeout=600)
         setup["before"] = _capture(case)
-        config = case / "h" / ".worktree-manager" / "config.toml"
-        config.write_text(
-            "[source]\nrepo=" + json.dumps(str(case / "published")) + '\nref="dev"\n'
-            "[runtime_source]\nchannel=\"dev\"\nallow_dev=true\nrepo="
-            + json.dumps(str(case / "published")) + "\n[maintenance]\nautomatic=false\n",
-            encoding="utf-8",
-        )
         setup["ready"] = True
         _write(case / "setup.json", setup)
     except BaseException as error:
@@ -224,14 +270,23 @@ def exercise(directory: Path) -> None:
     ]
     durable[-1].write_text("retained fixture data\n", encoding="utf-8")
     try:
-        report["durable_before"] = native._durable(durable)
-        (case / "process-trace-window").write_text("ordinary-source-update", encoding="utf-8")
-        command = _command(case, "worktree-manager", "update", "--project", "example")
-        result = native._run(command, case, timeout=840, check=False)
-        report["update"] = {"command": command, "returncode": result.returncode,
-                            "stdout": result.stdout, "stderr": result.stderr}
-        report["after"] = _capture(case)
-        report["durable_after"] = native._durable(durable)
+        deadline = time.monotonic() + 840
+        with source_transport(case, deadline=deadline) as repository:
+            durable[0].write_text(
+                "[source]\nrepo=" + json.dumps(repository) + '\nref="dev"\n'
+                "[runtime_source]\nchannel=\"dev\"\nallow_dev=true\nrepo="
+                + json.dumps(repository) + "\n[maintenance]\nautomatic=false\n",
+                encoding="utf-8",
+            )
+            report["transport"] = {"repository": repository, "kind": "existing read-only Git HTTP owner"}
+            report["durable_before"] = native._durable(durable)
+            (case / "process-trace-window").write_text("ordinary-source-update", encoding="utf-8")
+            command = _command(case, "worktree-manager", "update", "--project", "example")
+            result = native._run(command, case, timeout=deadline - time.monotonic(), check=False)
+            report["update"] = {"command": command, "returncode": result.returncode,
+                                "stdout": result.stdout, "stderr": result.stderr}
+            report["after"] = _capture(case)
+            report["durable_after"] = native._durable(durable)
         report["frozen_after"] = {
             branch: native._git(case, case / "published", "rev-parse", branch)
             for branch in ("main", "dev")

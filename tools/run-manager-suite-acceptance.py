@@ -17,6 +17,8 @@ import sys
 import time
 from typing import Any
 
+# This owner bootstraps the repository's process library on a fresh machine.
+importlib.import_module("plugin_test_containment")
 from agent_procutil import contained_test_mode, no_window_kwargs
 from agent_procutil.owned_process import run_installation_owned
 
