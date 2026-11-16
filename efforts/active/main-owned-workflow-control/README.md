@@ -22,6 +22,16 @@ the existing #11377 native and #3336/#7529 release owners.
 
 ## Goal
 
+**Kind:** completion; a finite campaign under the operator's assignment in
+[Request](#request).
+
+**Root goal (operator-defined, verbatim; source: Request):**
+
+> Ultimately, your goal is consolidation and elimination of redundant status
+> checks, to produce fewer overall pipeline runs so that Copilot reviews can
+> run more often without getting throttled. The main-owned-workflow-control
+> is a means to an end, but not the highest priority.
+
 Reduce redundant status checks and overall pipeline executions so Copilot review
 can run more often without unnecessary throttling. Preserve validation assurance
 and contribution gates while removing repeat work, redundant triggers and
@@ -67,6 +77,32 @@ splitting typing prerequisites into separate PRs. The
 [scope approval](installed-manager-lifecycle.md#november-16-strict-migration-strategy)
 retains the exact decision. All validation gates, capture limits and rollout
 holds remain unchanged.
+
+**Acceptance:** the Plan and Validation Plan below establish fewer redundant
+executions while preserving validation assurance and contribution gates.
+Installed-suite qualification must prove the real Manager Create/Open/Resume
+flows and the required candidate-bound refusal and publication behavior, not
+only source tests or installation success. Every remaining item must be
+verified and resolved, or explicitly transferred to a named tracked objective
+with accepted ownership; no ownerless remainder is completion.
+
+**Finalization criterion:** this whole effort is explicitly Done, all Plan and
+Validation Plan items meet that disposition, required publication/review/merge
+gates have passed, and the effort is archived and released through the normal
+repository flow. Retained custody follows its existing owners. Finishing a
+typing pass, native run, PR or session does not permit premature finalization.
+
+**Now:** temporarily paused for an operator-requested instruction refresh.
+The current accepted slice is the in-PR strict typing migration for installed
+suite qualification (#12013). Eligible units passed, but the strict source
+guard and bounded controlled capture still block current-head acceptance.
+The pause changes no authority, validation limit or existing hold.
+
+**Return:** after the refresh, re-read this Goal and the linked scope approvals,
+reconcile retained implementation/checker custody, and finish that slice under
+the unchanged gates. Earn current required CI before new installed Windows
+acceptance; then return to the remaining portfolio audit and consolidation
+outcome rather than treating the latest child milestone as the root goal.
 
 ## Guiding Intent
 
