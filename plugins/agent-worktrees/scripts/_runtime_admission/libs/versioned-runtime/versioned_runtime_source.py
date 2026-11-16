@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Collection, Iterable, Mapping, MutableMapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 import importlib.util
+from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -34,7 +35,7 @@ _GENERATED = {
 
 def fingerprint_entries(
     entries: Mapping[Path, str], *, label: Callable[[Path], str],
-    root_label: Callable[[Path], str], roots: Iterable[Path],
+    root_label: Callable[[Path], str], roots: Collection[Path],
     normalize_link: Callable[[str], str], path_type: Callable[[str], Path],
     file_hashes: MutableMapping[Path, str] | None, on_file: Callable[[Path, bytes], None] | None,
     on_progress: Callable[[], None] | None = None,
@@ -53,8 +54,8 @@ def fingerprint_entries(
     digest = hashlib.sha256()
     with ThreadPoolExecutor(max_workers=4) if parallel else nullcontext() as readers:
         def submit(entry: Path) -> Future[bytes] | None:
-            return (readers.submit(io_path(entry).read_bytes)
-                    if readers is not None and entries[entry] != "symlink" else None)
+            return (cast(ThreadPoolExecutor, readers).submit(io_path(entry).read_bytes)
+                    if entries[entry] != "symlink" else None)
 
         pending = {entry: submit(entry) for entry in ordered[:4]} if readers is not None else {}
         for index, entry in enumerate(ordered):
@@ -402,7 +403,9 @@ def package_version(slot_name: str) -> str:
     )
 
 
-def version_key(version: str) -> tuple[int, int, int, int, int, int, str, str] | tuple[int, tuple[tuple[int, int] | tuple[int, str], ...]]:
+def version_key(version: str) -> (
+    tuple[int, int, int, int, int, int, str, str] | tuple[int, tuple[tuple[int, int] | tuple[int, str], ...]]
+):
     """Order package releases and profiles before generated identities."""
     supported = re.fullmatch(
         r"(\d+)\.(\d+)\.(\d+)(?:[.-]dev(\d+))?(?:\+([A-Za-z0-9][A-Za-z0-9._-]*))?",
@@ -531,7 +534,7 @@ def payload_package_version(payload: Path, plugin: str) -> str:
     if plugin in standalone or (
         not plugin_manifest.exists() and not plugin_manifest.is_symlink()
     ):
-        tomllib = importlib.import_module("tomllib")
+        tomllib = import_module("tomllib")
 
         data = tomllib.loads((payload / "pyproject.toml").read_text(encoding="utf-8"))
         manifest = data.get("project")
@@ -663,7 +666,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot-root", type=Path)
     parser.add_argument("--format", choices=("version", "json", "shell-fields"), default="version")
     args = parser.parse_args(argv)
-    on_progress = lambda: print("source-runtime: completed source work", file=sys.stderr, flush=True)
+    last_progress: float | None = None
+
+    def on_progress() -> None:
+        nonlocal last_progress
+        now = time.monotonic()
+        if last_progress is None or now - last_progress >= 0.5:
+            print("source-runtime: completed source work", file=sys.stderr, flush=True)
+            last_progress = now
+
     try:
         if not _PACKAGE_VERSION.fullmatch(args.package_version):
             raise SourceIdentityError("Source deployment requires a supported package version")
@@ -710,7 +721,8 @@ if __name__ == "__main__":
 
 def fingerprint_source(
     paths: Iterable[str | os.PathLike[str]], *,
-    _normalize_windows_extended_path: Callable[[str], str], _native_path: Callable[[Path], Path],
+    _normalize_windows_extended_path: Callable[[str], str],
+    _native_path: Callable[[Path], Path],
     on_progress: Callable[[], None] | None = None,
     file_hashes: MutableMapping[Path, str] | None = None,
     on_file: Callable[[Path, bytes], None] | None = None,

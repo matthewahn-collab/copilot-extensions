@@ -13,19 +13,22 @@ import platform
 import re
 import sys
 import time
-import uuid
+from types import ModuleType
 from typing import Any, cast
+import uuid
 
 _SCRIPTS = Path(__file__).resolve().parent
 if _SCRIPTS.name == "installer-engine" and _SCRIPTS.parent.name == "libs":
     sys.path.insert(0, str(_SCRIPTS.parent / "versioned-runtime"))
 sys.path.insert(0, str(_SCRIPTS))
-import installer_engine as installer_engine
-engine = installer_engine
+import installer_engine as _engine_module
 from installer_wheel_inputs import WheelLimits, inspect_archive
 from installer_wheel_snapshot import WheelInstallInputs, WheelReuseInputs, retain_wheel_inputs
-import versioned_runtime_source as versioned_runtime_source
-sources = versioned_runtime_source
+import versioned_runtime_source as _sources_module
+sources = _sources_module
+versioned_runtime_source = _sources_module
+
+engine: ModuleType = _engine_module
 
 SCHEMA = "copilot-extensions.install-source"
 MANIFEST = "install-source.json"
@@ -33,9 +36,10 @@ APPLICATION_INSTALL_CONTRACT = {
     "schema": "copilot-extensions.prepared-application-install",
     "version": 1,
 }
+APPLICATION_INSTALL_CAPABILITIES = ("callback-timeouts/v1",)
 
 
-class _ApplicationDeclarationConflict(engine.ContentRepairRequired):
+class _ApplicationDeclarationConflict(_engine_module.ContentRepairRequired):
     """Different valid contracts require explicit repair, not corruption recovery."""
 
 
@@ -51,7 +55,7 @@ class ProjectSource:
         return cast(dict[str, Any], self.record["projects"][self.project_key])
 
     @property
-    def source_descriptor(self) -> dict[str, Any] | None:
+    def source_descriptor(self) -> dict[str, str] | None:
         descriptor = self.record.get("source_descriptor")
         if descriptor is not None and (
             not isinstance(descriptor, dict) or set(descriptor) != {"kind", "canonical", "ref"}
@@ -61,10 +65,10 @@ class ProjectSource:
             )
         ):
             raise ValueError("installation source has invalid repository provenance")
-        return descriptor
+        return cast(dict[str, str] | None, descriptor)
 
     @property
-    def composition(self) -> dict[str, Any] | None:
+    def composition(self) -> dict[str, str] | None:
         if "composition" not in self.record:
             return None
         composition = self.record["composition"]
@@ -94,7 +98,7 @@ def _read(path: Path) -> dict[str, Any]:
     record = json.loads(content)
     if not isinstance(record, dict):
         raise ValueError("installation input must be an object")
-    return record
+    return cast(dict[str, Any], record)
 
 
 def _member(root: Path, name: object) -> Path:
@@ -165,6 +169,7 @@ def select(snapshot: Path) -> ProjectSource:
 def wheel_inputs(
     profile_path: Path, wheel_directory: Path, *, deadline: float | None = None,
     expected_profile_sha256: str | None = None,
+    retention_deadline: float | None = None,
 ) -> Iterator[WheelInstallInputs]:
     """Retain an independently admitted profile; this receiver grants no approval."""
     if not profile_path.is_absolute() or not wheel_directory.is_absolute():
@@ -181,15 +186,18 @@ def wheel_inputs(
     if not isinstance(rows, list) or not rows or len(rows) > 256:
         raise ValueError("project requires a complete bounded wheel profile")
     archives: dict[str, Path] = {}
-    expected: dict[str, Any] = {}
+    expected: dict[str, str] = {}
     for row in rows:
         if not isinstance(row, dict) or row.get("filename") in archives:
             raise ValueError("project wheel profile has invalid or duplicate inputs")
         filename = row.get("filename")
         if not isinstance(filename, str) or Path(filename).name != filename:
             raise ValueError("project wheel profile has an invalid filename")
+        digest = row.get("sha256")
+        if not isinstance(digest, str):
+            raise ValueError("project wheel profile has an invalid archive digest")
         archives[filename] = _member(wheel_directory, filename)
-        expected[filename] = row.get("sha256")
+        expected[filename] = digest
     limits = WheelLimits(
         max_archive_bytes=128 << 20, max_expanded_bytes=1 << 30,
         max_member_bytes=512 << 20, max_metadata_bytes=16 << 20,
@@ -198,6 +206,7 @@ def wheel_inputs(
     with retain_wheel_inputs(
         archives, expected, max_wheels=256, max_archive_bytes=128 << 20,
         max_total_bytes=512 << 20, max_snapshot_bytes=1 << 30, deadline=deadline,
+        **({"retention_deadline": retention_deadline} if retention_deadline is not None else {}),
     ) as retained:
         distributions: list[tuple[str, str, str, str]] = []
         expanded = 0
@@ -219,10 +228,10 @@ def wheel_inputs(
             distributions.append((
                 row["name"], row["version"], row["filename"], row["sha256"],
             ))
-        inputs = cast(WheelInstallInputs, getattr(engine, "WheelInstallInputs")(
+        inputs: WheelInstallInputs = engine.WheelInstallInputs(
             retained, json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False),
             tuple(distributions),
-        ))
+        )
         inputs.verify()
         yield inputs
         inputs.verify()
@@ -233,6 +242,7 @@ def wheel_inputs(
 @contextmanager
 def project_inputs(
     snapshot: Path, component: str, *, deadline: float | None = None,
+    retention_deadline: float | None = None,
 ) -> Iterator[tuple[ProjectSource, WheelInstallInputs]]:
     """Hold the prepared complete wheel set through canonical installed health."""
     selected = select_project(snapshot, component)
@@ -243,6 +253,7 @@ def project_inputs(
     with wheel_inputs(
         _member(snapshot, project.get("profile")),
         _member(snapshot, project["wheel_inputs"]), deadline=deadline,
+        retention_deadline=retention_deadline,
     ) as inputs:
         profile = inputs.receipt()["binding"]
         if profile.get("release") != {
@@ -449,7 +460,19 @@ def install_application(
         or sum(len(value.encode("utf-8")) for value in arguments) > 65536
     ):
         raise ValueError("application installation arguments exceed their contract")
-    with project_inputs(snapshot, component) as (selected, inputs):
+    preview = select_project(snapshot, component)
+    if "application" not in preview.project:
+        raise ValueError("application installation requires a prepared application project")
+    declaration = _read(_member(snapshot, preview.project["application"]) / "application.json")
+    from runtime_application_install import _validate_application, application_install_timeout
+
+    _validate_application(declaration)
+    install_timeout = application_install_timeout(declaration)
+    retention_options: dict[str, float] = {}
+    if "callback_timeout_seconds" in declaration:
+        # Keep acquisition bounded; reserve construction room before callback work.
+        retention_options["retention_deadline"] = time.monotonic() + 1200 + install_timeout
+    with project_inputs(snapshot, component, **retention_options) as (selected, inputs):
         if sources.read_source_identity(
             payload, selected.identity.package_version, plugin=component,
         ) != selected.identity:
@@ -460,7 +483,8 @@ def install_application(
         if "application" not in selected.project:
             raise ValueError("application installation requires a prepared application project")
         application = _member(snapshot, selected.project["application"])
-        declaration = _read(application / "application.json")
+        if selected.identity != preview.identity or _read(application / "application.json") != declaration:
+            raise ValueError("application declaration changed during retained input admission")
         if declaration.get("construction") != application_inputs(selected, inputs):
             raise ValueError("application declaration differs from its retained Source/profile")
         if declaration.get("name") == "worktree-manager":
@@ -495,7 +519,7 @@ def install_application(
                     "select a distinct repair generation"
                 )
 
-        candidate_options: dict[str, Any] = {"health_module": health_module}
+        candidate_options: dict[str, object] = {"health_module": health_module}
         if component == "agent-worktrees":
             identity = selection["identity"]["runtime_source"]
             candidate_options.update(
@@ -572,7 +596,7 @@ def install_application(
                     *command,
                 ],
                 inputs=frozen, descriptor=candidate.descriptor,
-                timeout=180, cwd=cwd, candidate=candidate.slot,
+                timeout=install_timeout, cwd=cwd, candidate=candidate.slot,
                 allow_breakaway=True,
             )
             inputs.verify()
@@ -586,6 +610,7 @@ def native_session(
     snapshot: Path, component: str, payload: Path, root: Path, *,
     uv: Path, base_python: Path, health_module: str,
     expected_version: str, expected_hash: str, repair: bool = False,
+    health_callable: str | None = None,
 ) -> int:
     """Retain a completed wheel candidate while its native owner settles setup."""
     with project_inputs(snapshot, component) as (selected, inputs):
@@ -596,6 +621,7 @@ def native_session(
         return _native_candidate_session(
             selected.payload, root, inputs, native_selection(selected, inputs),
             uv=uv, base_python=base_python, health_module=health_module,
+            health_callable=health_callable,
             expected_version=expected_version, expected_hash=expected_hash, repair=repair,
             application=_member(snapshot, selected.project["application"])
             if "application" in selected.project else None,
@@ -607,17 +633,21 @@ def _native_candidate_session(
     uv: Path, base_python: Path, health_module: str, expected_version: str, expected_hash: str,
     repair: bool = False, application: Path | None = None,
     nested_environment: bool = False,
+    health_callable: str | None = None,
 ) -> int:
     if base_python.resolve(strict=True) != Path(sys.executable).resolve(strict=True):
         raise ValueError("native construction must use its selected base interpreter")
     if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", health_module):
         raise ValueError("native construction requires an ordinary application module")
+    if health_callable is not None and not re.fullmatch(r"[A-Za-z_]\w*", health_callable):
+        raise ValueError("native construction requires an ordinary health callable")
     if selection["payload_hash"] != expected_hash or selection["runtime_version"] != expected_version:
         raise ValueError("native source/profile selection changed before construction")
     version = expected_version + (".repair." + uuid.uuid4().hex if repair else "")
     with engine.numbered_candidate(
         root, version, plugin=payload, uv=uv, base_python=base_python,
-        health_module=health_module, extras=tuple(selection["extras"]),
+        health_module=health_module, health_callable=health_callable,
+        extras=tuple(selection["extras"]),
         local_packages=tuple(selection["local_packages"]), wheel_inputs=inputs,
         application=application, process_retention=True, reuse_generations=False,
         nested_environment=nested_environment,
@@ -671,12 +701,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--uv", type=Path)
     parser.add_argument("--base-python", type=Path)
     parser.add_argument("--health-module")
+    parser.add_argument("--health-callable")
     parser.add_argument("--expected-runtime-version")
     parser.add_argument("--expected-payload-hash")
     parser.add_argument("--repair", action="store_true")
     parser.add_argument("--nested-environment", action="store_true")
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+    if args.health_callable is not None and not args.native_session:
+        parser.error("--health-callable requires --native-session")
     if args.arguments and (
         not args.install_application or args.arguments[0] != "--"
     ):
@@ -716,6 +749,7 @@ def main(argv: list[str] | None = None) -> int:
             return _native_candidate_session(
                 args.payload, args.root, inputs, selection,
                 uv=args.uv, base_python=args.base_python, health_module=args.health_module,
+                health_callable=args.health_callable,
                 expected_version=args.expected_runtime_version, expected_hash=args.expected_payload_hash,
                 repair=args.repair,
                 nested_environment=args.nested_environment,
@@ -751,6 +785,7 @@ def main(argv: list[str] | None = None) -> int:
             uv=args.uv, base_python=args.base_python, health_module=args.health_module,
             expected_version=args.expected_runtime_version, expected_hash=args.expected_payload_hash,
             repair=args.repair,
+            health_callable=args.health_callable,
         )
     if args.native_inputs:
         with project_inputs(args.install_source, args.component) as (selected, inputs):
