@@ -2345,6 +2345,29 @@ corrected with explicit types, the existing attribute fallback idiom and real
 non-null assertions. Production behavior and the regression assertions remain
 unchanged.
 
+### November 16 - Classify the refused integrated HTTP source before recapture
+
+Exact-source run 43960345947 at `88ac9513e9` fails in capture preparation,
+before executing its controlled probes. Artifact-boundary and immutable
+peer-prefix controls pass, but the canonical writer rejects unclassified drift
+in `plugins/agent-bridge/src/agent_bridge/_peer_launch.py`. Restoring Dev's
+current evidence during reconciliation also restored that source's old declared
+digest. This is a real missing declaration, not a passed capture or a reason
+to relax the guard.
+
+Three subsequent Dev commits are reconciled at
+`177331781248c4720403c1b54190ed8842407320`; the only actual overlap is the
+generated unit source inventory. All 5,039 admitted cases and 316 coverage
+targets remain preserved. The canonical `--prepare` operation at the resulting
+`00a2baf4d3` checkpoint updates only the already-allowed semantic peer-launch
+source digest. Independent structured comparison proves every other registry
+field, fixture reference and provenance record unchanged. Preparation produces
+one declaration output and no captured evidence.
+
+A new published checkpoint and fresh controlled execution are still required.
+Run 43960345947 remains failed. Current-head CI, POSIX probe qualification,
+Windows acceptance and the larger parent gates remain open.
+
 The canonical `typecheck.py ai-attribution --strict` contract passes all eight
 source targets for both Linux and Windows. Its missing environment is prepared
 only after the checker reports it missing. The corrected cold/repeat writer
