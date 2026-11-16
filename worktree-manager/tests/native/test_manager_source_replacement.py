@@ -79,6 +79,40 @@ def test_real_source_acquisition_and_producer_provenance_share_the_owned_transpo
         opener.open(url + "/HEAD", timeout=1)
 
 
+def test_source_feed_survives_the_actual_scrubbed_subprocess_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contained_run: None,
+) -> None:
+    (tmp_path / "project").mkdir()
+    index = "https://packages.example.invalid/simple"
+    monkeypatch.setenv("UV_DEFAULT_INDEX", index)
+    monkeypatch.setenv("UV_INDEX_URL", "https://not-selected.example.invalid/simple")
+    monkeypatch.setenv("UV_EXTRA_INDEX_URL", "https://not-selected.example.invalid/extra")
+    monkeypatch.setenv("GH_TOKEN", "fixture-not-a-token")
+    observed = native._run([
+        sys.executable, "-I", "-B", "-c",
+        "import json,os; print(json.dumps({key:os.environ.get(key) for key in "
+        "('UV_DEFAULT_INDEX','UV_INDEX_URL','UV_EXTRA_INDEX_URL','GH_TOKEN','HOME')}))",
+    ], tmp_path, extra_env=source.source_feed_environment())
+    assert json.loads(observed.stdout) == {
+        "UV_DEFAULT_INDEX": index, "UV_INDEX_URL": None, "UV_EXTRA_INDEX_URL": None,
+        "GH_TOKEN": None, "HOME": str(tmp_path / "h"),
+    }
+
+
+@pytest.mark.parametrize("index", [
+    "https://pypi.org/simple", "http://packages.example.invalid/simple",
+    "https://user:password@packages.example.invalid/simple",
+    "https://packages.example.invalid/simple?query=value",
+    "https://packages.example.invalid/simple#fragment",
+])
+def test_source_feed_cannot_weaken_the_governed_url_only_contract(
+    index: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UV_DEFAULT_INDEX", index)
+    with pytest.raises(ValueError):
+        source.source_feed_environment()
+
+
 def test_transport_starts_in_a_fresh_isolated_fixture_interpreter(
     git_case: tuple[Path, Path, str, str],
 ) -> None:

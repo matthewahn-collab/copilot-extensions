@@ -100,6 +100,7 @@ def qualify(
             os.environ["MANAGER_SUITE_ACCEPTANCE_DATA"] = str(workspace)
             report["stages"]["assertions"] = _run([
                 sys.executable, str(REPO / "tools" / "run-plugin-tests.py"), "worktree-manager",
+                *(["--junit-dir", str(root / "junit")] if mode == "source" else []),
                 "--test-file", "tests/native/" + fixture.name, "-k",
                 "test_installed_manager_updates_frozen_source" if mode == "source" else mode,
             ], timeout=300)

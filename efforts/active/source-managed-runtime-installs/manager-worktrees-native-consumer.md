@@ -197,6 +197,12 @@ to candidate workflows or authorize a production installation. If the owner
 cannot represent this packet, its original bounds or independently sanitized
 evidence, record the exact missing boundary rather than bypass it.
 
+The protected-owner adapter plan cleared review in #12801. Its PF/VF checks
+retain the original case, stage, cleanup and evidence bounds. Implementation
+review and protected-controller publication remain required before another
+native attempt. No feed value is exposed to this candidate workflow, and
+native qualification remains blocked.
+
 ## Plan - agent-recommended
 
 - [x] Q1: Review this bounded contract, reconcile the current producer/consumer
@@ -374,6 +380,17 @@ portable provenance normalized from the actual donor origin through the
 producer's existing descriptor input, rather than inventing an association.
 Thirteen source controls and forty-nine runner controls pass; the remaining
 native prerequisite is the governed-feed admission decision above.
+
+The bounded extension subsequently received approval and its plan merged in
+#12801. Source construction and the installed ordinary-update command now
+forward only that owner's validated, credential-free governed default-index
+URL across the fixture's fake HOME and UV scrubbing. Other tokens, indexes and
+host configuration remain excluded. Nineteen contained source controls pass,
+including actual subprocess propagation and inadmissible-feed controls.
+The existing assertion stage also exports its actual JUnit into the runner's
+diagnostic root; forty-nine runner controls retain the original selectors,
+stage limits and unconditional settlement. No new hosted attempt or native
+acceptance is claimed; the protected adapter must be reviewed and published.
 
 ### 2026-11-15 - Physical application environment prerequisite
 

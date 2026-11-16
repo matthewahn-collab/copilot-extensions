@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import sys
 import time
 from typing import Any
+import urllib.parse
 
 import manager_suite_fixture as native
 from manager_suite_artifacts import _DELIVERY, _command, _runtime_process_inventory_script, _write
@@ -20,6 +22,21 @@ sys.path.insert(0, str(native.REPO / "tools"))
 
 SCHEMA = "worktree-manager.native-source-replacement.v1"
 COMPONENTS = ("worktree-manager", "agent-worktrees")
+
+
+def source_feed_environment() -> dict[str, str]:
+    """Forward only the protected owner's URL-only index across fake HOME."""
+    index = os.environ.get("UV_DEFAULT_INDEX")
+    if not index:
+        return {}
+    provider = runpy.run_path(str(native.REPO / "tools" / "governed_feed_trust.py"))
+    selected = provider["_validated_trusted_index_url"]({"UV_DEFAULT_INDEX": index})
+    if selected is None:
+        raise ValueError("Source qualification requires its governed HTTPS feed")
+    parsed = urllib.parse.urlsplit(selected[0])
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Source qualification accepts only a credential-free feed URL")
+    return {"UV_DEFAULT_INDEX": selected[0]}
 
 
 def freeze_source(case: Path, repository: Path, main: str, dev: str) -> dict[str, Any]:
@@ -74,7 +91,9 @@ def _applications(
     ]
     for name in COMPONENTS:
         command.extend(["--project", name])
-    result = json.loads(native._run(command, case, timeout=deadline - time.monotonic()).stdout)
+    result = json.loads(native._run(
+        command, case, timeout=deadline - time.monotonic(), extra_env=source_feed_environment(),
+    ).stdout)
     if not isinstance(result, dict) or set(result) != set(COMPONENTS):
         raise RuntimeError("Canonical application producer returned another portfolio")
     return {name: str(Path(result[name]).resolve(strict=True)) for name in COMPONENTS}
@@ -264,12 +283,12 @@ def prepare(directory: Path, main: str, dev: str) -> None:
             native.REPO / "worktree-manager" / "scripts" / "runtime_install.py",
             "--root", Path(env["HOME"]) / ".worktree-manager",
             "--install-source", snapshots["main"]["worktree-manager"], "--", "--version",
-        ], case, timeout=600)
+        ], case, timeout=600, extra_env=source_feed_environment())
         payload = case / "h" / ".copilot" / "installed-plugins" / "copilot-extensions" / "agent-worktrees"
         native._run([
             shutil.which("pwsh"), "-NoProfile", "-File", payload / "scripts" / "install.ps1",
             "install", "-InstallSource", snapshots["main"]["agent-worktrees"], "-InputTimeout", "600",
-        ], case, timeout=600)
+        ], case, timeout=600, extra_env=source_feed_environment())
         setup["before"] = _capture(case)
         setup["ready"] = True
         _write(case / "setup.json", setup)
@@ -303,7 +322,10 @@ def exercise(directory: Path) -> None:
             report["durable_before"] = native._durable(durable)
             (case / "process-trace-window").write_text("ordinary-source-update", encoding="utf-8")
             command = _command(case, "worktree-manager", "update", "--project", "example")
-            result = native._run(command, case, timeout=deadline - time.monotonic(), check=False)
+            result = native._run(
+                command, case, timeout=deadline - time.monotonic(), check=False,
+                extra_env=source_feed_environment(),
+            )
             report["update"] = {"command": command, "returncode": result.returncode,
                                 "stdout": result.stdout, "stderr": result.stderr}
             report["after"] = _capture(case)

@@ -129,6 +129,7 @@ def test_source_stages_keep_bounds_selection_and_unconditional_settlement(
             if failed == "exception":
                 raise subprocess.TimeoutExpired(argv, timeout)
         elif stage == "assertions":
+            assert argv[argv.index("--junit-dir") + 1] == str(tmp_path / "junit")
             assert argv[-1] == "test_installed_manager_updates_frozen_source"
         return int(stage == failed)
 
