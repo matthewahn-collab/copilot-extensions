@@ -45,7 +45,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from importlib.machinery import ModuleSpec
 from typing import Any, cast
 from promotion_candidate import (
     CandidateIdentityError, candidate_clock, candidate_environment, format_promotion_message,
@@ -105,7 +104,7 @@ def _is_ancestor(ancestor: str, descendant: str, *, cwd: Path | None = None) -> 
 
 
 def _load_module(path: Path, name: str) -> Any:
-    spec = cast(ModuleSpec, importlib.util.spec_from_file_location(name, path))
+    spec = importlib.util.spec_from_file_location(name, path)  # type: Any
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
