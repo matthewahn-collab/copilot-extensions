@@ -18,13 +18,20 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("materialized", [False, True])
 def test_vault_first_use_root_survives_a_different_worker(
     owning_payload: tuple[Path, Path, Path],
     area: Path,
     monkeypatch: pytest.MonkeyPatch,
     present: bool,
+    materialized: bool,
 ) -> None:
     payload, installation, project = owning_payload
+    if materialized:
+        canonical = (
+            Path(__file__).resolve().parents[2] / "installer-engine" / "installer_driver.py"
+        )
+        (payload / "scripts" / "installer_driver.py").write_bytes(canonical.read_bytes())
     for name in ("install.ps1", "install.sh"):
         path = payload / "scripts" / name
         record = (

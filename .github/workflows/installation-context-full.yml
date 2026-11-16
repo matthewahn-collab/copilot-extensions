@@ -542,6 +542,21 @@ jobs:
                   print(repeated.stdout, end="", flush=True)
                   print(repeated.stderr, end="", file=sys.stderr, flush=True)
                   repeated.check_returncode()
+                  if phase == "cached-import":
+                      observed = json.loads(repeated.stdout)
+                      ownership = python_cache_permissions._owner()
+                      print(json.dumps({
+                          "diagnostic-token-sids": ownership._current_sids(os.getpid()),
+                      }), flush=True)
+                      cached = Path(observed["cached"]).resolve()
+                      prefix = Path(observed["prefix"]).resolve()
+                      for member in (cached, *cached.parents):
+                          if not member.is_relative_to(prefix):
+                              break
+                          print(json.dumps({
+                              "diagnostic-cache-entry": str(member),
+                              "owner-sid": ownership._path_owner_sid(member),
+                          }), flush=True)
 
   vault-activation-windows:
     if: github.event_name == 'workflow_dispatch' && inputs.portfolio == 'vault-activation'
