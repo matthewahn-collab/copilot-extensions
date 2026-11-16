@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -106,6 +107,44 @@ print('isolated transport served and closed')
         [sys.executable, "-I", "-B", "-c", program, Path(__file__).parent, case], case, timeout=90,
     )
     assert observed.stdout.strip() == "isolated transport served and closed"
+
+
+def test_fresh_main_preparation_preserves_the_actual_donor_provenance(
+    git_case: tuple[Path, Path, str, str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case, repository, main, dev = git_case
+    native._git(case, repository, "remote", "add", "origin", "https://example.invalid/runtime.git")
+    descriptor = source.repository_provenance(repository, deadline=time.monotonic() + 60)
+    assert descriptor == {"kind": "git", "canonical": "git:https://example.invalid/runtime", "ref": ""}
+    frozen = source.freeze_source(case, repository, main, dev)
+    snapshots = {name: case / name for name in source.COMPONENTS}
+    for path in snapshots.values():
+        path.mkdir()
+    execute = native._run
+    which = shutil.which
+    calls: list[dict[str, str]] = []
+
+    def run(argv: list[Any], directory: Path, **options: Any) -> subprocess.CompletedProcess[str]:
+        if "--prepare-applications" not in argv:
+            return execute(argv, directory, **options)
+        observed = json.loads(argv[argv.index("--source-descriptor") + 1])
+        assert observed == descriptor and argv[argv.index("--branch") + 1] == "main"
+        assert "--timeout" not in argv and "--deadline" in argv
+        calls.append(observed)
+        return subprocess.CompletedProcess(argv, 0, json.dumps({name: str(path) for name, path in snapshots.items()}), "")
+
+    monkeypatch.setattr(shutil, "which", lambda name: sys.executable if name == "uv" else which(name))
+    monkeypatch.setattr(native, "_run", run)
+    observed = source._applications(case, "main", frozen, sys.executable, descriptor=descriptor)
+    assert calls == [descriptor] and set(observed) == set(source.COMPONENTS)
+
+
+def test_unattributed_donor_refuses_before_application_preparation(
+    git_case: tuple[Path, Path, str, str],
+) -> None:
+    _case, repository, _main, _dev = git_case
+    with pytest.raises(ValueError, match="donor's portable repository provenance"):
+        source.repository_provenance(repository, deadline=time.monotonic() + 60)
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native Windows frontdoors")

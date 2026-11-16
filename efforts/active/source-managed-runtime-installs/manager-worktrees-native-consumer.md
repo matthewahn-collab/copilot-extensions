@@ -361,6 +361,20 @@ controls and seven-file Linux/Windows strict typing pass. These are preparation
 and test-owner corrections; another exact-head hosted attempt must still prove
 the actual consumer before any qualification credit.
 
+The [third hosted attempt](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43788364029)
+used Main `781a32fb3b837ca5e229b0d7b5626bb66fa715d8` and the same frozen
+Dev input. The private root passed ancestor admission, but the constructor
+refused an unconfigured governed build-toolchain feed before application
+installation. Native settlement passed; final read-only Git-file cleanup
+failed and retained the private allocation under the disposable VM owner.
+This result earns no consumer or cleanup acceptance. The existing native
+temporary-directory cleanup now handles owned read-only objects, and a real
+read-only-file control covers it. Fresh snapshot preparation also carries
+portable provenance normalized from the actual donor origin through the
+producer's existing descriptor input, rather than inventing an association.
+Thirteen source controls and forty-nine runner controls pass; the remaining
+native prerequisite is the governed-feed admission decision above.
+
 ### 2026-11-15 - Physical application environment prerequisite
 
 #12693 merged as `14fa6069e6da8f2414491630b545a52d39db6d31` after

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -46,6 +48,11 @@ def test_source_owner_copies_evidence_and_preserves_unsettled_private_roots(
         case = execution_root / "source"
         case.mkdir()
         (case / "setup.json").write_text('{"actual_source":"retained"}', encoding="utf-8")
+        git = case / ".git" / "objects"
+        git.mkdir(parents=True)
+        readonly = git / "readonly-object"
+        readonly.write_bytes(b"fixture Git object")
+        os.chmod(readonly, stat.S_IREAD)
         (root / "source-runner.json").write_text(
             json.dumps({"stages": {"settle": int(outcome == "unsettled")}, "errors": []}), encoding="utf-8",
         )

@@ -48,7 +48,18 @@ def freeze_source(case: Path, repository: Path, main: str, dev: str) -> dict[str
     return frozen
 
 
-def _applications(case: Path, branch: str, frozen: dict[str, Any], base: str) -> dict[str, str]:
+def repository_provenance(repository: Path, *, deadline: float) -> dict[str, str]:
+    provider = runpy.run_path(str(native.REPO / "tools" / "local_install_source.py"))
+    descriptor = provider["repository_source"](repository, None, deadline=deadline)
+    if descriptor is None:
+        raise ValueError("Source qualification requires the donor's portable repository provenance")
+    return {key: descriptor[key] for key in ("kind", "canonical", "ref")}
+
+
+def _applications(
+    case: Path, branch: str, frozen: dict[str, Any], base: str, *, descriptor: dict[str, str],
+) -> dict[str, str]:
+    deadline = time.monotonic() + 600
     source = case / "published"
     native._git(case, source, "checkout", "-q", branch)
     uv = shutil.which("uv")
@@ -59,11 +70,11 @@ def _applications(case: Path, branch: str, frozen: dict[str, Any], base: str) ->
         "--source-checkout", str(source), "--source-commit", frozen[branch]["commit"],
         "--main-head", frozen["main"]["commit"], "--branch", branch,
         "--output", str(case / ("applications-" + branch)), "--prepare-applications",
-        "--uv", uv, "--timeout", "600",
+        "--uv", uv, "--deadline", str(deadline), "--source-descriptor", json.dumps(descriptor, sort_keys=True),
     ]
     for name in COMPONENTS:
         command.extend(["--project", name])
-    result = json.loads(native._run(command, case, timeout=600).stdout)
+    result = json.loads(native._run(command, case, timeout=deadline - time.monotonic()).stdout)
     if not isinstance(result, dict) or set(result) != set(COMPONENTS):
         raise RuntimeError("Canonical application producer returned another portfolio")
     return {name: str(Path(result[name]).resolve(strict=True)) for name in COMPONENTS}
@@ -218,9 +229,15 @@ def prepare(directory: Path, main: str, dev: str) -> None:
     _write(case / "setup.json", setup)
     try:
         frozen = setup["frozen"] = freeze_source(case, native.REPO, main, dev)
+        descriptor = setup["source_descriptor"] = repository_provenance(
+            native.REPO, deadline=time.monotonic() + 600,
+        )
         base = str(Path(getattr(sys, "_base_executable", sys.executable)).resolve())
         setup["base"] = base
-        snapshots = {branch: _applications(case, branch, frozen, base) for branch in ("main", "dev")}
+        snapshots = {
+            branch: _applications(case, branch, frozen, base, descriptor=descriptor)
+            for branch in ("main", "dev")
+        }
         setup["prepared"] = {branch: _declarations(rows) for branch, rows in snapshots.items()}
         native._git(case, case / "published", "checkout", "-q", "main")
         manifest = native._read(case / "published" / "plugins" / "agent-worktrees" / "plugin.json")

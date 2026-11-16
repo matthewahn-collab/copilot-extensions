@@ -152,8 +152,8 @@ def _qualify_source(
                 if (source / name).is_dir():
                     shutil.copytree(source / name, retained / name)
             if report.get("stages", {}).get("settle") == 0:
-                native_path: Callable[[Path], Path] = importlib.import_module("native_test_paths").native_test_path
-                shutil.rmtree(native_path(workspace))
+                temporary = importlib.import_module("native_test_paths").NativeTemporaryDirectory
+                temporary._rmtree(str(workspace))
             else:
                 report["retained_private_root"] = str(workspace)
                 report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

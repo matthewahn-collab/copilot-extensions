@@ -10205,6 +10205,10 @@ The same runner has a separate, explicitly selected authentic-source case:
 already merged into Dev. The job freezes the fetched Main commit and verifies
 Dev ancestry before fixture construction. It copies those real Git objects into
 an independent fixture repository; it does not synthesize versions or commits.
+Its constructor requires an owner-admitted governed package feed. The protected
+Windows qualification feed is not available to this candidate-branch job;
+missing feed configuration is a failed prerequisite, never native acceptance
+or permission for a public-index fallback.
 Its direct, disposable-hosted-Windows-only invocation is:
 
 ```text
@@ -10221,6 +10225,8 @@ actual installed application declarations and source identities, physical
 environments, native command-routing proofs and retained fixture data.
 Source acquisition uses the existing context-owned read-only Git HTTP owner,
 serving a bare clone of the actual frozen objects without a transport commit.
+Fresh snapshot provenance comes from the actual donor origin through the
+existing producer normalizer and descriptor input.
 Manager launcher proofs query the existing terminal capability for the actual
 interpreter; equal package versions cannot hide a stale generation.
 The source case uses one compact private allocation in the disposable runner's
@@ -10232,6 +10238,8 @@ retains the allocation explicitly in `source-runner.json`. No shared ancestor
 ACL is changed or producer ownership check disabled. Transport startup is also
 covered in a fresh `python -I` fixture process, and mocked observer controls do
 not require PowerShell to be installed; actual native observation still does.
+Owned allocation cleanup uses the existing read-only-aware native temporary
+directory owner, including actual read-only Git-object controls.
 The original 1,800/900/300/90-second preparation/exercise/assertion/settlement
 allocations and process observer remain unchanged; settlement inventories
 remaining fixture-owned tasks and runtime processes. This case does not launch
