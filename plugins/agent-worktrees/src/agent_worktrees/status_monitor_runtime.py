@@ -597,12 +597,24 @@ def _daemon_environment() -> dict[str, str]:
     ``COPILOT_PLUGIN_ROOT`` (an absent context makes ``cfg.install_dir()``
     resolve the legacy root, not a cell's). Case-insensitive names."""
     env = _core_helper("_background_environment", status_updater_cli._background_environment)()
+    from agent_procutil import contained_test_mode
+    from agent_procutil.environment import fresh_user_environment
+
+    if os.name == "nt" and not contained_test_mode():
+        prefixes = ("AGENT_", "COPILOT_", "PSMUX_", "TMUX_", "UV_", "PYTHON")
+        overrides = {
+            key: value for key, value in env.items()
+            if key.upper().startswith(prefixes)
+            or key.upper() in {"VIRTUAL_ENV", "__PYVENV_LAUNCHER__", "TMUX", "PSMUX"}
+        }
+        env = fresh_user_environment(overrides=overrides)
+    excluded = {key.upper() for key in status_updater_cli._BACKGROUND_AUTH_ENV_KEYS}
     scoped = {key.upper() for key in _DAEMON_SESSION_SCOPED_ENV_KEYS}
     paths = {key.upper() for key in _DAEMON_PATH_ENV_KEYS}
     return {
         key: os.path.abspath(value) if key.upper() in paths and value.strip()
         and not Path(value.strip()).anchor else value
-        for key, value in env.items() if key.upper() not in scoped
+        for key, value in env.items() if key.upper() not in scoped | excluded
     }
 
 

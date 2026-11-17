@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from agent_procutil.git import resolve_git
 
 
 from . import env_scrub, git_tree_diff, push_timeout
@@ -70,7 +71,7 @@ def resolve_to_anchor(repo_path: Path) -> Path:
         from agent_procutil import no_window_kwargs
 
         return subprocess.run(
-            ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=5,
+            [resolve_git(), "-C", str(cwd), *args], capture_output=True, text=True, timeout=5,
             env=repository_identity_env(), **no_window_kwargs(),
         )
 
@@ -142,11 +143,11 @@ def git(
     if observation_deadline is not None and not _windows_observation():
         raise push_timeout.ObservationUnavailable("bounded observation is Windows-only")
     prefix = ["-c", f"core.hooksPath={_NO_HOOKS_PATH}"] if no_hooks else []
-    cmd = ["git", *prefix, *args]
     env = repository_identity_env() if isolated_repository or identity_scoped() else os.environ.copy()
     from .update_auth_context import repository_environment, run_acquisition
     env = repository_environment(env)
     env = env_scrub.scrub_python_runtime_env({**env, "GIT_TERMINAL_PROMPT": "0"})
+    cmd = [resolve_git(env=env), *prefix, *args]
 
     def execute():
         if observation_deadline is not None:

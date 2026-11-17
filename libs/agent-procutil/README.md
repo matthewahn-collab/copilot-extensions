@@ -140,6 +140,31 @@ launch envelopes. Redaction handles known credential forms and supplied known
 values after control normalization; it is best-effort, not a guarantee about
 arbitrary third-party output.
 
+## Git and fresh user environments
+
+`agent_procutil.git.resolve_git(explicit=None, env=None)` returns an absolute
+executable without launching a command. An explicit argument or
+`AGENT_GIT_EXECUTABLE` takes precedence and an invalid explicit selection fails
+without silently choosing another installation. Otherwise discovery uses the
+process PATH; Windows then tries the fresh OS user/system PATH and Git for
+Windows installation/App Paths registry metadata. Portable and nondefault PATH
+installations remain supported; no fixed ProgramFiles location is assumed.
+
+Only successful discovery is cached. A subsequent lookup checks that the
+selected executable still exists and rediscovers confirmed disappearance.
+Absence is not permanently cached. This is pre-launch discovery, not a command
+retry: a missing CWD, race after discovery, timeout or unknown process outcome
+is left to the command owner and is never replayed by this helper.
+
+`agent_procutil.environment.fresh_user_environment(overrides=...)` reads a
+Windows user environment with `CreateEnvironmentBlock`, without inheriting the
+caller's stale PATH or changing global process state. Native resources are
+released before it returns. POSIX retains its inherited environment.
+Overrides are explicit and case-insensitive on Windows. The application owns
+which runtime selectors to retain and which credentials/session values to scrub;
+it must preserve an enclosing test/cleanup boundary rather than refreshing
+isolated test roots into production user roots.
+
 ## Managed Python bytecode cache
 
 This is the legacy compatibility API. New launchers use the complete

@@ -1,5 +1,28 @@
 # Agent Worktrees -- Architecture
 
+## Git and resident launch environments
+
+The Git wrapper and checkout-anchor probe select an absolute executable through
+the shared `agent_procutil.git` resolver. `AGENT_GIT_EXECUTABLE` explicitly
+selects an installation; invalid explicit selection fails rather than falling
+back. Process PATH precedes Windows fresh user/system PATH and Git installation
+registry fallbacks. Positive discovery is reused while the file remains present;
+missing discovery is not retained forever. No Git command is retried after a
+launch failure, timeout or unknown outcome.
+
+On Windows, future resident-monitor launches build a per-child fresh OS user
+environment. Only explicit `AGENT_`, `COPILOT_`, mux, UV and Python runtime
+selectors are overlaid from the launching context; stale PATH is not.
+The existing credential and session-ID exclusions apply after that merge,
+including values originating in the OS environment. POSIX inheritance is
+unchanged. Contained tests retain their existing private roots/environment
+rather than escaping into the production user's roots.
+
+This changes dependency selection and launch context, not registration policy,
+the wire protocol or runtime replacement authority. The native Git/Copilot
+mapping model remains the governing intent; registration-policy work retains
+its separate contributor and acceptance gates.
+
 ## Required-application New admission
 
 An opted-in repository's `require_application_readiness` extends the existing

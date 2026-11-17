@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 import typing
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,25 @@ from agent_worktrees.git_ops import (
 # ---------------------------------------------------------------------------
 
 class TestGitWrapper:
+    @pytest.mark.parametrize("error", [
+        FileNotFoundError("missing executable"),
+        NotADirectoryError("missing cwd"),
+        subprocess.TimeoutExpired(["git"], 1),
+    ])
+    def test_launch_or_timeout_is_never_replayed(self, monkeypatch, error):
+        import agent_worktrees.git_ops as go
+        calls = []
+
+        def fail(*args, **kwargs):
+            calls.append(args)
+            raise error
+
+        monkeypatch.setattr(go, "resolve_git", lambda **kw: str(Path("git.exe").absolute()))
+        monkeypatch.setattr(go.subprocess, "run", fail)
+        with pytest.raises(type(error)):
+            go.git("status")
+        assert len(calls) == 1
+
     def test_successful_command(self, tmp_path: Path):
         """git() should capture stdout from a successful command."""
         # Use a real git command that works without a repo
@@ -142,13 +162,13 @@ class TestNoHooks:
     def test_no_hooks_prepends_config(self, monkeypatch):
         seen = self._capture(monkeypatch)
         go.git("commit", "-m", "x", no_hooks=True)
-        assert seen["cmd"][:3] == ["git", "-c", f"core.hooksPath={go._NO_HOOKS_PATH}"]
+        assert seen["cmd"][:3] == [go.resolve_git(), "-c", f"core.hooksPath={go._NO_HOOKS_PATH}"]
         assert seen["cmd"][3:] == ["commit", "-m", "x"]
 
     def test_default_keeps_hooks_enabled(self, monkeypatch):
         seen = self._capture(monkeypatch)
         go.git("commit", "-m", "x")
-        assert seen["cmd"] == ["git", "commit", "-m", "x"]
+        assert seen["cmd"] == [go.resolve_git(), "commit", "-m", "x"]
         assert "core.hooksPath" not in " ".join(seen["cmd"])
 
     def test_squash_recommit_bypasses_hooks(self, monkeypatch):
@@ -678,7 +698,7 @@ class TestCrossAccountAuth:
         monkeypatch.setattr(go, "_remote_url", lambda remote, *, cwd: "https://github.com/Owner/r.git")
         # Owner differs from the active account -> cross-account: inject.
         monkeypatch.setattr(go, "_active_gh_account", lambda: "DifferentUser")
-        monkeypatch.setattr(go, "_gh_token_for_owner", lambda owner: "ghp_secret")
+        monkeypatch.setattr(go, "gh_token_for_target", lambda selection: "ghp_secret")
         args = go._auth_config_args("origin", cwd=".")
         assert args[0] == "-c"
         expected = base64.b64encode(b"x-access-token:ghp_secret").decode()
@@ -690,7 +710,7 @@ class TestCrossAccountAuth:
         cwd-based remote-name lookup to resolve."""
         import base64
         monkeypatch.setattr(go, "_active_gh_account", lambda: "DifferentUser")
-        monkeypatch.setattr(go, "_gh_token_for_owner", lambda owner: "ghp_secret")
+        monkeypatch.setattr(go, "gh_token_for_target", lambda selection: "ghp_secret")
         args = go._auth_config_args_for_url("https://github.com/Owner/r.git")
         expected = base64.b64encode(b"x-access-token:ghp_secret").decode()
         assert args == ["-c", f"http.extraheader=AUTHORIZATION: basic {expected}"]
