@@ -85,10 +85,11 @@ and global Validation item is resolved or explicitly transferred to a named
 tracked objective. Record the actual accepted outcomes, settle owned obligations
 and use the normal worktree finalization flow; a merged child is insufficient.
 
-**Now:** diagnose the authentic Manager/Worktrees fixture's cold source-preparation
-process-utility import failure. Its latest hosted attempt passed source admission
-and governed-feed validation, failed preparation before application installation,
-and passed settlement. No native consumer or installed-adoption pass is inferred.
+**Now:** qualify the authentic Manager/Worktrees fixture through its selected
+source-associated native receivers. The cold process-utility import is corrected;
+the latest hosted attempt prepared both application pairs, then correctly refused
+a mismatched Worktrees invocation payload. Settlement passed with no remaining
+fixture tasks or processes. No installed-update or adoption pass is inferred.
 
 **Return:** after this bounded fixture slice, select the next unmet criterion
 from the complete Plan and global Validation Plan, retaining the addressed-suite,

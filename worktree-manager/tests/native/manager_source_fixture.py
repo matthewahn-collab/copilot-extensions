@@ -116,6 +116,18 @@ def _declarations(snapshots: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+def _baseline_worktrees_command(snapshot: Path) -> list[str]:
+    project = native._read(snapshot / "install-source.json")["projects"]["agent-worktrees"]
+    receiver = snapshot / project["payload"] / "scripts" / "install.ps1"
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        raise RuntimeError("Source qualification requires PowerShell")
+    return [
+        pwsh, "-NoProfile", "-File", str(receiver), "install",
+        "-InstallSource", str(snapshot), "-InputTimeout", "600",
+    ]
+
+
 def _directory(directory: Path) -> Path:
     native.require_venue()
     directory = directory.resolve()
@@ -286,11 +298,10 @@ def prepare(directory: Path, main: str, dev: str) -> None:
             "--root", Path(env["HOME"]) / ".worktree-manager",
             "--install-source", snapshots["main"]["worktree-manager"], "--", "--version",
         ], case, timeout=600, extra_env=source_feed_environment())
-        payload = case / "h" / ".copilot" / "installed-plugins" / "copilot-extensions" / "agent-worktrees"
-        native._run([
-            shutil.which("pwsh"), "-NoProfile", "-File", payload / "scripts" / "install.ps1",
-            "install", "-InstallSource", snapshots["main"]["agent-worktrees"], "-InputTimeout", "600",
-        ], case, timeout=600, extra_env=source_feed_environment())
+        native._run(
+            _baseline_worktrees_command(Path(snapshots["main"]["agent-worktrees"])),
+            case, timeout=600, extra_env=source_feed_environment(),
+        )
         setup["before"] = _capture(case)
         setup["ready"] = True
         _write(case / "setup.json", setup)

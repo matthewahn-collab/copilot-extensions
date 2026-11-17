@@ -261,6 +261,35 @@ finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
 
+### 2026-11-17 - Constructed application pairs reached native source admission
+
+Run [43986201349](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43986201349),
+attempt 1, selected reviewed fixture
+`0fe4ec18dc8a333157d52e48e21d30f395761e17` with the same immutable
+Main/Dev runtime pair as the fourth attempt. The protected controller was
+`d5e6ab09e359147878bcbfa4bfbc7abe8525ab84`; its packet implementation
+matched the previously reviewed controller.
+
+The validated result remains failed. The cold provenance fix worked and both
+Main and Dev Manager/Worktrees application pairs were prepared. Preparation
+then invoked the Worktrees receiver from the marketplace-delivery payload
+while supplying the separately associated source snapshot. Native admission
+correctly refused their differing payload identities. Settlement returned zero,
+with no remaining fixture tasks or processes. No installed-update or routing
+pass is inferred from prepared applications.
+
+The fixture now invokes the native receiver belonging to the selected source
+snapshot's own project declaration. This preserves the independent marketplace
+delivery path and the real install-source identity check rather than weakening
+either. A focused real PowerShell receiver control checks the actual invoked
+script/source association and retains the original action and 600-second
+input bound. The original aggregate, stage, scope and cleanup bounds remain.
+
+All 20 contained source controls pass, including the actual PowerShell receiver
+invocation. Whole-file strict Linux/Windows typing, fatal lint and documentation
+structure/consistency checks pass. These controls do not replace the required
+exact-source hosted installation/update result.
+
 ### 2026-11-17 - Protected attempt reached the cold fixture import boundary
 
 The constructor repair is contained in release #12891, Main

@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import manager_source_fixture as source
 import manager_suite_fixture as native
-from manager_suite_artifacts import _command
+from manager_suite_artifacts import _command, _write
 
 
 @pytest.fixture
@@ -182,6 +182,32 @@ def test_unattributed_donor_refuses_before_application_preparation(
     _case, repository, _main, _dev = git_case
     with pytest.raises(ValueError, match="donor's portable repository provenance"):
         source.repository_provenance(repository, deadline=time.monotonic() + 60)
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell receiver")
+def test_baseline_receiver_runs_from_its_selected_source_payload(
+    tmp_path: Path, contained_run: None,
+) -> None:
+    case = tmp_path / "case"
+    (case / "project").mkdir(parents=True)
+    snapshot = tmp_path / "source snapshot"
+    scripts = snapshot / "selected payload" / "scripts"
+    scripts.mkdir(parents=True)
+    _write(snapshot / "install-source.json", {
+        "projects": {"agent-worktrees": {"payload": "selected payload"}},
+    })
+    (scripts / "install.ps1").write_text(
+        "param([string]$Action,[string]$InstallSource,[int]$InputTimeout)\n"
+        "$ErrorActionPreference='Stop'\n"
+        "$record=Get-Content -LiteralPath (Join-Path $InstallSource 'install-source.json') -Raw|ConvertFrom-Json\n"
+        "$expected=Join-Path (Join-Path $InstallSource $record.projects.'agent-worktrees'.payload) 'scripts'\n"
+        "if($PSScriptRoot -cne $expected -or $Action -ne 'install' -or $InputTimeout -ne 600){exit 7}\n"
+        "Write-Output 'source-associated receiver'\n",
+        encoding="utf-8",
+    )
+
+    observed = native._run(source._baseline_worktrees_command(snapshot), case, timeout=30)
+    assert observed.stdout.strip() == "source-associated receiver"
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native Windows frontdoors")
