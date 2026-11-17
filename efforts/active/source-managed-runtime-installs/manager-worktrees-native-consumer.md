@@ -88,9 +88,9 @@ unchanged. No feed value or credentials were requested or received.
   #10570 remains the separately owned prepared-Worktrees draft; qualification
   does not copy, pre-patch or supersede it.
 - #12852 tracks the Manager constructor's refusal of equivalent Windows paths.
-  Its contributor-owned repair merged in #12861. A containing Main release
-  still gates this fixture's fresh baseline construction; do not repeat the
-  known failure against an unrepaired released input or copy the repair here.
+  Its contributor-owned repair merged in #12861 and is contained in release
+  #12891. That construction dependency is resolved; its release does not
+  qualify this fixture's separate authentic-source consumer.
 - The current parent requires fresh/existing construction parity, a complete
   required-set staging barrier, and foreground-update/independent-service
   lifetime semantics. This slice cannot credit those outcomes from old
@@ -200,14 +200,15 @@ support declaration available. The approved extension does not expose a feed
 to candidate workflows or authorize a production installation. If the owner
 cannot represent this packet, its original bounds or independently sanitized
 evidence, record the exact missing boundary rather than bypass it.
-The controller publication condition is satisfied. The #12852 constructor repair
-has merged, but its containing Main release still blocks the next native attempt.
+The controller publication condition and #12852 containing-release dependency
+are satisfied. The fourth attempt's cold fixture import failure below now
+requires a reviewed correction before another exact-source attempt.
 
 The protected-owner adapter plan cleared review in #12801. Its PF/VF checks
 retain the original case, stage, cleanup and evidence bounds. Implementation
-review and protected-controller publication are complete, but the constructor
-release dependency above still blocks another native attempt. No feed value is
-exposed to this candidate workflow, and native qualification remains unobserved.
+review and protected-controller publication are complete. No feed value is
+exposed to this candidate workflow. The latest failed attempt and its focused
+fixture correction retain the original review and native qualification gates.
 
 ## Plan - agent-recommended
 
@@ -259,6 +260,35 @@ The parent remains Active until its complete Plan and Validation Plan close;
 finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
+
+### 2026-11-17 - Protected attempt reached the cold fixture import boundary
+
+The constructor repair is contained in release #12891, Main
+`d3c08c801241ba0a0bd5c70234261b6a6657cde4`. The protected adapter and
+support were verified before submitting the existing named packet.
+Run [43948170207](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43948170207),
+attempt 1, selected fixture `9a483c4901ea8cbc2003ba949412c67d9397bc74`,
+that Main seed/controller, and merged Dev
+`15da010ab44e434138b66dea5d011521af66908f`.
+
+The validated result is failed, not qualified: source admission and governed
+feed validation passed; preparation failed before application installation;
+settlement returned zero. The real donor-provenance lookup loaded the installed
+process-utility package before the source preparation owner required its
+repository copy. The resulting origin refusal was retained, not weakened.
+
+The existing isolated-interpreter control now calls the real provenance provider
+before its transport assertion and reproduces the same failure. The bounded
+fixture correction bootstraps the repository process utilities through the
+existing containment import, as the outer runner already does, before any
+fixture process call. No production installer, source-origin check, native
+allocation or deadline changes. Further native acceptance remains unobserved.
+
+All 19 contained source controls pass after the correction, including the
+previously failing cold provenance/transport case. Whole-file strict Linux and
+Windows typing for the seven fixture Python files and touched-file fatal lint
+pass. These source and real-subprocess controls are not a hosted application
+construction or installed-update result.
 
 ### 2026-11-16 - Constructor repair merged, containing release pending
 

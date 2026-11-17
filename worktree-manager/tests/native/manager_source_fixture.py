@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+import importlib
 from pathlib import Path
 import re
 import runpy
@@ -19,6 +20,7 @@ from manager_suite_artifacts import _DELIVERY, _command, _runtime_process_invent
 from manager_suite_artifacts import _configuration as _configuration, _env as _env
 
 sys.path.insert(0, str(native.REPO / "tools"))
+importlib.import_module("plugin_test_containment")
 
 SCHEMA = "worktree-manager.native-source-replacement.v1"
 COMPONENTS = ("worktree-manager", "agent-worktrees")
