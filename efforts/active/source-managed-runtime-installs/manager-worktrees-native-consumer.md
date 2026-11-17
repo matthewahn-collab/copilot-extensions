@@ -261,6 +261,31 @@ finishing this fixture cannot finalize the parent worktrees.
 
 ## Journal
 
+### 2026-11-17 - Source-associated receiver reached PowerShell admission
+
+Run [43990115485](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43990115485),
+attempt 1, selected reviewed fixture
+`67c05ac06c6e05c8ff229c0a0d195843056271f0` and the unchanged immutable
+Main/Dev runtime pair. The protected controller was
+`a98364e8928b0ffdff73247dff7b0c5b17b5c74c`; its named packet code
+matched the previously reviewed implementation.
+
+The validated result remains failed. The fixture selected the source-associated
+Worktrees receiver, but PowerShell refused its extended-path script operand with
+`AuthorizationManager check failed` before installer execution. Settlement
+returned zero with no remaining fixture tasks or processes. No execution-policy
+bypass, changed installer identity check or installed-update pass follows from
+this failure.
+
+The real PowerShell regression passes with the ordinary spelling and fails
+with the extended spelling before correction, reproducing the hosted error.
+Only the external script operand is converted to the ordinary Windows spelling;
+the selected install-source argument, physical source association, long-path
+filesystem operations and PowerShell execution policy are unchanged.
+All 21 contained source controls now pass, including both real receiver-path
+spellings; strict Linux/Windows typing and fatal lint pass. Native application
+qualification still requires its reviewed exact-source hosted result.
+
 ### 2026-11-17 - Constructed application pairs reached native source admission
 
 Run [43986201349](https://github.com/ThomasMichon/copilot-extensions/actions/runs/43986201349),

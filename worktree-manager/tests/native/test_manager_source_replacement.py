@@ -185,9 +185,14 @@ def test_unattributed_donor_refuses_before_application_preparation(
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell receiver")
+@pytest.mark.parametrize("extended", (False, True))
 def test_baseline_receiver_runs_from_its_selected_source_payload(
-    tmp_path: Path, contained_run: None,
+    tmp_path: Path, contained_run: None, extended: bool,
 ) -> None:
+    if extended:
+        if os.name != "nt":
+            pytest.skip("Windows extended-path spelling")
+        tmp_path = Path("\\\\?\\" + str(tmp_path.resolve()))
     case = tmp_path / "case"
     (case / "project").mkdir(parents=True)
     snapshot = tmp_path / "source snapshot"
@@ -201,13 +206,13 @@ def test_baseline_receiver_runs_from_its_selected_source_payload(
         "$ErrorActionPreference='Stop'\n"
         "$record=Get-Content -LiteralPath (Join-Path $InstallSource 'install-source.json') -Raw|ConvertFrom-Json\n"
         "$expected=Join-Path (Join-Path $InstallSource $record.projects.'agent-worktrees'.payload) 'scripts'\n"
-        "if($PSScriptRoot -cne $expected -or $Action -ne 'install' -or $InputTimeout -ne 600){exit 7}\n"
-        "Write-Output 'source-associated receiver'\n",
+        "if(-not (Test-Path -LiteralPath $expected) -or $Action -ne 'install' -or $InputTimeout -ne 600){exit 7}\n"
+        "Write-Output $PSScriptRoot\n",
         encoding="utf-8",
     )
 
     observed = native._run(source._baseline_worktrees_command(snapshot), case, timeout=30)
-    assert observed.stdout.strip() == "source-associated receiver"
+    assert Path(observed.stdout.strip()).samefile(scripts)
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native Windows frontdoors")

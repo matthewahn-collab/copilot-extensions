@@ -118,12 +118,18 @@ def _declarations(snapshots: dict[str, str]) -> dict[str, Any]:
 
 def _baseline_worktrees_command(snapshot: Path) -> list[str]:
     project = native._read(snapshot / "install-source.json")["projects"]["agent-worktrees"]
-    receiver = snapshot / project["payload"] / "scripts" / "install.ps1"
+    receiver = str(snapshot / project["payload"] / "scripts" / "install.ps1")
+    # PowerShell's script authorization rejects extended-path operands.
+    if os.name == "nt":
+        if receiver.startswith("\\\\?\\UNC\\"):
+            receiver = "\\\\" + receiver[8:]
+        elif receiver.startswith("\\\\?\\"):
+            receiver = receiver[4:]
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         raise RuntimeError("Source qualification requires PowerShell")
     return [
-        pwsh, "-NoProfile", "-File", str(receiver), "install",
+        pwsh, "-NoProfile", "-File", receiver, "install",
         "-InstallSource", str(snapshot), "-InputTimeout", "600",
     ]
 

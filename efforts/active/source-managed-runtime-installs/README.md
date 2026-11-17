@@ -87,9 +87,10 @@ and use the normal worktree finalization flow; a merged child is insufficient.
 
 **Now:** qualify the authentic Manager/Worktrees fixture through its selected
 source-associated native receivers. The cold process-utility import is corrected;
-the latest hosted attempt prepared both application pairs, then correctly refused
-a mismatched Worktrees invocation payload. Settlement passed with no remaining
-fixture tasks or processes. No installed-update or adoption pass is inferred.
+the latest hosted attempt selected the associated Worktrees receiver, then
+PowerShell refused its extended-path script operand before installer execution.
+Settlement passed with no remaining fixture tasks or processes. No
+installed-update or adoption pass is inferred.
 
 **Return:** after this bounded fixture slice, select the next unmet criterion
 from the complete Plan and global Validation Plan, retaining the addressed-suite,
