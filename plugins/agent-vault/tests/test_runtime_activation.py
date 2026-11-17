@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 from types import ModuleType
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 import pytest
 from agent_procutil import no_window_kwargs
